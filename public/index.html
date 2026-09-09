@@ -28,6 +28,10 @@
     --bad-bg:#FBE7E5;
     --bad-border:#EFC0BB;
     --shadow:0 1px 2px rgba(34,31,25,0.06), 0 8px 24px -12px rgba(34,31,25,0.18);
+    /* widths of the three pinned (frozen) leading columns */
+    --w-advise:110px;
+    --w-account:190px;
+    --w-adset:280px;
   }
   @media (prefers-color-scheme: dark){
     :root:not([data-theme="light"]){
@@ -116,6 +120,24 @@
   td.name-cell{color:var(--text);}
   td.age-cell{text-align:right;color:var(--text-muted);}
 
+  /* ---------- pinned leading columns ---------- */
+  /* Fixed widths so each sticky column knows its own left offset. Cell content is
+     truncated by .truncate so a long name can never widen the column and shift them. */
+  th.pinned, td.pinned{ position:sticky; }
+  th.pin-1, td.pin-1{ left:0; width:var(--w-advise); min-width:var(--w-advise); max-width:var(--w-advise); }
+  th.pin-2, td.pin-2{ left:var(--w-advise); width:var(--w-account); min-width:var(--w-account); max-width:var(--w-account); }
+  th.pin-3, td.pin-3{ left:calc(var(--w-advise) + var(--w-account)); width:var(--w-adset); min-width:var(--w-adset); max-width:var(--w-adset); box-shadow:inset -1px 0 0 var(--border); }
+  /* pinned header cells sit above pinned body cells, which sit above scrolling cells */
+  thead th.pinned{ z-index:3; }
+  thead th.pinned button{ overflow:hidden; }
+  /* opaque backgrounds matching each row state, so scrolling cells can't show through */
+  tbody td.pinned{ z-index:2; background:var(--surface); }
+  tbody tr:nth-child(even) td.pinned{ background:var(--surface-alt); }
+  tbody tr:hover td.pinned{ background:var(--row-hover); }
+  .truncate{ display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  td.pin-2 .truncate{ max-width:calc(var(--w-account) - 28px); }
+  td.pin-3 .truncate{ max-width:calc(var(--w-adset) - 28px); }
+
   .pill{ display:inline-flex; align-items:center; gap:5px; padding:3px 10px 3px 8px; border-radius:99px; font-family:"Manrope",sans-serif; font-weight:700; font-size:11.5px; letter-spacing:0.03em; border:1px solid transparent; }
   .pill::before{content:"";width:6px;height:6px;border-radius:50%;}
   .pill.keep{background:var(--good-bg);color:var(--good);border-color:var(--good-border);}
@@ -146,6 +168,17 @@
   .state-msg{ padding:40px 20px; text-align:center; color:var(--text-muted); font-size:14px; }
   .state-msg.err{ color:var(--bad); }
 
+  /* narrower pins so the scrolling section keeps room on small screens */
+  @media (max-width:900px){
+    :root{ --w-advise:96px; --w-account:140px; --w-adset:180px; }
+  }
+  /* below this the three pins would eat the whole viewport — let them scroll instead */
+  @media (max-width:700px){
+    th.pinned, td.pinned{ position:static; width:auto; min-width:0; max-width:none; }
+    th.pin-3, td.pin-3{ box-shadow:none; }
+    td.pin-2 .truncate, td.pin-3 .truncate{ max-width:none; }
+  }
+
   @media (max-width:640px){ .title-block h1{font-size:22px;} }
 </style>
 </head>
@@ -161,7 +194,7 @@
     </div>
     <div class="header-actions">
       <span class="source-tag" id="source-tag"><span class="dot"></span> <span id="source-label">Loading…</span></span>
-      <button class="btn" id="toggle-thresholds">Edite Thresholds</button>
+      <button class="btn" id="toggle-thresholds">Edit Thresholds</button>
     </div>
   </header>
 
@@ -241,6 +274,9 @@
     { key: "conv10",   label: "Conversions (Last 10 Days)",      type: "number"  },
   ];
 
+  // The first three columns are frozen when the table scrolls horizontally.
+  const PINNED_COUNT = 3;
+
   let ROWS = [];
   let sortKey = null;
   let sortDir = 1;
@@ -256,10 +292,11 @@
 
   function renderHead(){
     headRow.innerHTML = "";
-    COLUMNS.forEach(col => {
+    COLUMNS.forEach((col, i) => {
       const th = document.createElement("th");
       const isNum = col.type === "number" || col.type === "currency";
       if (isNum) th.classList.add("num");
+      if (i < PINNED_COUNT) th.classList.add("pinned", "pin-" + (i + 1));
       const btn = document.createElement("button");
       btn.type = "button";
       const isSorted = sortKey === col.key;
@@ -308,6 +345,7 @@
       const tr = document.createElement("tr");
 
       const tdAdvise = document.createElement("td");
+      tdAdvise.className = "pinned pin-1";
       const pill = document.createElement("span");
       pill.className = "pill " + (r.advise === "Keep" ? "keep" : "pause");
       pill.textContent = r.advise;
@@ -315,13 +353,19 @@
       tr.appendChild(tdAdvise);
 
       const tdAccount = document.createElement("td");
-      tdAccount.innerHTML = '<span class="account-chip"></span>';
+      tdAccount.className = "pinned pin-2";
+      tdAccount.innerHTML = '<span class="account-chip truncate"></span>';
       tdAccount.querySelector(".account-chip").textContent = r.account;
+      tdAccount.title = r.account;
       tr.appendChild(tdAccount);
 
       const tdAdset = document.createElement("td");
-      tdAdset.className = "name-cell";
-      tdAdset.textContent = r.adset;
+      tdAdset.className = "name-cell pinned pin-3";
+      // inner span carries the ellipsis; the title stays on the cell for the hover tooltip
+      const adsetText = document.createElement("span");
+      adsetText.className = "truncate";
+      adsetText.textContent = r.adset;
+      tdAdset.appendChild(adsetText);
       tdAdset.title = r.adset;
       tr.appendChild(tdAdset);
 
