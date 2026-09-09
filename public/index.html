@@ -1,0 +1,471 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Keep or Pause</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root{
+    --bg:#F7F5F0;
+    --surface:#FFFFFF;
+    --surface-alt:#EFEAE0;
+    --row-hover:#F1EDE3;
+    --border:#DFD8C8;
+    --text:#221F19;
+    --text-muted:#726A57;
+    --accent:#2F5D50;
+    --accent-ink:#FFFFFF;
+    --accent-soft:#E3EDE8;
+    --good:#2E7D4F;
+    --good-bg:#E1F1E6;
+    --good-border:#BBDFC7;
+    --warn:#AD5F19;
+    --warn-bg:#FBEBDA;
+    --warn-border:#EAC79A;
+    --bad:#B3261E;
+    --bad-bg:#FBE7E5;
+    --bad-border:#EFC0BB;
+    --shadow:0 1px 2px rgba(34,31,25,0.06), 0 8px 24px -12px rgba(34,31,25,0.18);
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#17160F;
+      --surface:#201E16;
+      --surface-alt:#2A281D;
+      --row-hover:#302E22;
+      --border:#3B3826;
+      --text:#EDE8D9;
+      --text-muted:#A99F87;
+      --accent:#7DC7AE;
+      --accent-ink:#12251F;
+      --accent-soft:rgba(125,199,174,0.14);
+      --good:#84CC98;
+      --good-bg:rgba(132,204,152,0.14);
+      --good-border:rgba(132,204,152,0.35);
+      --warn:#E3A164;
+      --warn-bg:rgba(227,161,100,0.14);
+      --warn-border:rgba(227,161,100,0.38);
+      --bad:#E5847C;
+      --bad-bg:rgba(229,132,124,0.14);
+      --bad-border:rgba(229,132,124,0.38);
+      --shadow:0 1px 2px rgba(0,0,0,0.3), 0 8px 24px -12px rgba(0,0,0,0.5);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#17160F; --surface:#201E16; --surface-alt:#2A281D; --row-hover:#302E22;
+    --border:#3B3826; --text:#EDE8D9; --text-muted:#A99F87;
+    --accent:#7DC7AE; --accent-ink:#12251F; --accent-soft:rgba(125,199,174,0.14);
+    --good:#84CC98; --good-bg:rgba(132,204,152,0.14); --good-border:rgba(132,204,152,0.35);
+    --warn:#E3A164; --warn-bg:rgba(227,161,100,0.14); --warn-border:rgba(227,161,100,0.38);
+    --bad:#E5847C; --bad-bg:rgba(229,132,124,0.14); --bad-border:rgba(229,132,124,0.38);
+    --shadow:0 1px 2px rgba(0,0,0,0.3), 0 8px 24px -12px rgba(0,0,0,0.5);
+  }
+
+  *{box-sizing:border-box;}
+  body{ margin:0; background:var(--bg); color:var(--text); font-family:"Manrope",system-ui,sans-serif; -webkit-font-smoothing:antialiased; }
+  .wrap{ max-width:1180px; margin:0 auto; padding:28px 20px 56px; display:flex; flex-direction:column; gap:18px; }
+
+  header{ display:flex; flex-wrap:wrap; align-items:flex-end; justify-content:space-between; gap:14px; padding-bottom:16px; border-bottom:1px solid var(--border); }
+  .title-block h1{ margin:0 0 4px; font-size:28px; font-weight:800; letter-spacing:-0.02em; }
+  .title-block p{ margin:0; color:var(--text-muted); font-size:13.5px; }
+  .title-block p code{ font-family:"IBM Plex Mono",monospace; background:var(--surface-alt); border:1px solid var(--border); border-radius:4px; padding:1px 6px; font-size:12.5px; color:var(--text); }
+  .header-actions{ display:flex; align-items:center; gap:10px; }
+  .source-tag{ display:flex; align-items:center; gap:6px; font-size:11.5px; letter-spacing:0.06em; text-transform:uppercase; color:var(--text-muted); font-weight:600; }
+  .source-tag .dot{ width:7px; height:7px; border-radius:50%; background:var(--good); box-shadow:0 0 0 3px var(--good-bg); }
+  .source-tag.err .dot{ background:var(--bad); box-shadow:0 0 0 3px var(--bad-bg); }
+
+  .btn{ appearance:none; border:1px solid var(--border); background:var(--surface); color:var(--text); font-family:"Manrope",sans-serif; font-weight:700; font-size:12.5px; padding:8px 14px; border-radius:8px; cursor:pointer; box-shadow:var(--shadow); }
+  .btn:hover{ background:var(--row-hover); }
+  .btn.primary{ background:var(--accent); color:var(--accent-ink); border-color:transparent; }
+
+  .stats{ display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; }
+  .stat{ background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:14px 16px; display:flex; flex-direction:column; gap:4px; box-shadow:var(--shadow); }
+  .stat .label{ font-size:11.5px; letter-spacing:0.07em; text-transform:uppercase; color:var(--text-muted); font-weight:700; }
+  .stat .value{ font-family:"IBM Plex Mono",monospace; font-size:26px; font-weight:600; font-variant-numeric:tabular-nums; }
+  .stat.keep .value{color:var(--good);}
+  .stat.pause .value{color:var(--warn);}
+  .stat .sub{font-size:12px;color:var(--text-muted);}
+
+  .controls{ display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; }
+  .segmented{ display:inline-flex; background:var(--surface); border:1px solid var(--border); border-radius:9px; padding:3px; gap:2px; box-shadow:var(--shadow); }
+  .segmented button{ appearance:none; border:none; background:transparent; color:var(--text-muted); font-family:"Manrope",sans-serif; font-weight:700; font-size:13px; padding:7px 16px; border-radius:6px; cursor:pointer; transition:background .15s ease, color .15s ease; }
+  .segmented button:hover{color:var(--text);}
+  .segmented button.active{ background:var(--accent); color:var(--accent-ink); }
+  .segmented button:focus-visible, th button:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+  .result-count{ font-size:13px; color:var(--text-muted); font-variant-numeric:tabular-nums; }
+  .result-count strong{color:var(--text);}
+
+  .table-shell{ background:var(--surface); border:1px solid var(--border); border-radius:12px; overflow:hidden; box-shadow:var(--shadow); }
+  .table-scroll{ overflow-x:auto; }
+  table{ border-collapse:collapse; width:100%; min-width:980px; font-family:"IBM Plex Mono",monospace; font-size:13px; }
+  thead th{ position:sticky; top:0; background:var(--surface-alt); border-bottom:1px solid var(--border); z-index:1; text-align:left; padding:0; }
+  th button{ appearance:none; width:100%; border:none; background:transparent; font-family:"Manrope",sans-serif; font-weight:700; font-size:11.5px; letter-spacing:0.05em; text-transform:uppercase; color:var(--text-muted); padding:11px 14px; display:flex; align-items:center; gap:6px; cursor:pointer; white-space:nowrap; }
+  th button:hover{color:var(--text);}
+  th.num button{justify-content:flex-end;}
+  th .arrow{ font-size:10px; opacity:0.35; transition:opacity .15s ease; }
+  th button.sorted .arrow{opacity:1;color:var(--accent);}
+  th button.sorted{color:var(--text);}
+
+  tbody td{ padding:10px 14px; border-bottom:1px solid var(--border); white-space:nowrap; vertical-align:middle; }
+  tbody tr:last-child td{border-bottom:none;}
+  tbody tr:nth-child(even){background:var(--surface-alt);}
+  tbody tr:hover{background:var(--row-hover);}
+  td.num{text-align:right;font-variant-numeric:tabular-nums;}
+  td.name-cell{color:var(--text);}
+  td.age-cell{text-align:right;color:var(--text-muted);}
+
+  .pill{ display:inline-flex; align-items:center; gap:5px; padding:3px 10px 3px 8px; border-radius:99px; font-family:"Manrope",sans-serif; font-weight:700; font-size:11.5px; letter-spacing:0.03em; border:1px solid transparent; }
+  .pill::before{content:"";width:6px;height:6px;border-radius:50%;}
+  .pill.keep{background:var(--good-bg);color:var(--good);border-color:var(--good-border);}
+  .pill.keep::before{background:var(--good);}
+  .pill.pause{background:var(--warn-bg);color:var(--warn);border-color:var(--warn-border);}
+  .pill.pause::before{background:var(--warn);}
+
+  .account-chip{ font-family:"Manrope",sans-serif; font-weight:600; font-size:12.5px; color:var(--text); }
+
+  footer{ display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px; color:var(--text-muted); font-size:12px; }
+
+  /* ---------- thresholds panel ---------- */
+  .thresholds-panel{ background:var(--surface); border:1px solid var(--border); border-radius:12px; box-shadow:var(--shadow); padding:18px 20px; display:flex; flex-direction:column; gap:14px; }
+  .thresholds-panel h2{ margin:0; font-size:16px; font-weight:800; }
+  .thresholds-panel p.help{ margin:0; color:var(--text-muted); font-size:12.5px; }
+  .thresh-table{ width:100%; border-collapse:collapse; font-size:13px; }
+  .thresh-table th{ text-align:left; font-family:"Manrope",sans-serif; font-weight:700; font-size:11px; letter-spacing:0.05em; text-transform:uppercase; color:var(--text-muted); padding:6px 8px; border-bottom:1px solid var(--border); }
+  .thresh-table td{ padding:6px 8px; border-bottom:1px solid var(--border); font-family:"IBM Plex Mono",monospace; }
+  .thresh-table tr:last-child td{ border-bottom:none; }
+  .thresh-table input{ width:90px; font-family:"IBM Plex Mono",monospace; font-size:13px; background:var(--surface-alt); border:1px solid var(--border); border-radius:6px; padding:5px 7px; color:var(--text); }
+  .thresh-table input:focus{ outline:2px solid var(--accent); outline-offset:1px; }
+  .thresh-save{ font-family:"Manrope",sans-serif; font-weight:700; font-size:12px; padding:5px 12px; border-radius:6px; border:1px solid var(--border); background:var(--accent-soft); color:var(--accent); cursor:pointer; }
+  .thresh-save:hover{ filter:brightness(1.05); }
+  .thresh-status{ font-size:11.5px; font-weight:600; }
+  .thresh-status.ok{ color:var(--good); }
+  .thresh-status.err{ color:var(--bad); }
+
+  .state-msg{ padding:40px 20px; text-align:center; color:var(--text-muted); font-size:14px; }
+  .state-msg.err{ color:var(--bad); }
+
+  @media (max-width:640px){ .title-block h1{font-size:22px;} }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <header>
+    <div class="title-block">
+      <p style="margin-bottom:6px;"><a href="https://meta-ads-tools.pages.dev/" style="color:var(--text-muted);text-decoration:none;font-size:12.5px;font-weight:600;">← All tools</a></p>
+      <h1>Keep or Pause</h1>
+      <p>Live 5/10-day performance read for every active adset · Tuhin Paul + TruBuddy</p>
+    </div>
+    <div class="header-actions">
+      <span class="source-tag" id="source-tag"><span class="dot"></span> <span id="source-label">Loading…</span></span>
+      <button class="btn" id="toggle-thresholds">Edit Thresholds</button>
+    </div>
+  </header>
+
+  <div class="thresholds-panel" id="thresholds-panel" hidden>
+    <h2>Pause thresholds by product</h2>
+    <p class="help">An eligible adset (age ≥ 5 days) is flagged Pause when EITHER window's cost/result exceeds its threshold AND conversions fall below it. Changes save immediately and apply from the next daily pull.</p>
+    <table class="thresh-table">
+      <thead>
+        <tr>
+          <th>Product</th>
+          <th>5-day cost</th>
+          <th>5-day purchases</th>
+          <th>10-day cost</th>
+          <th>10-day purchases</th>
+          <th></th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="thresh-body"></tbody>
+    </table>
+  </div>
+
+  <div class="stats">
+    <div class="stat">
+      <div class="label">Adsets tracked</div>
+      <div class="value" id="stat-total">–</div>
+      <div class="sub">across 2 ad accounts</div>
+    </div>
+    <div class="stat keep">
+      <div class="label">Keep</div>
+      <div class="value" id="stat-keep">–</div>
+      <div class="sub">recommended to keep running</div>
+    </div>
+    <div class="stat pause">
+      <div class="label">Pause</div>
+      <div class="value" id="stat-pause">–</div>
+      <div class="sub">recommended to pause</div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <div class="segmented" id="filter-group" role="group" aria-label="Filter by advice">
+      <button data-filter="all" class="active">All</button>
+      <button data-filter="Keep">Keep</button>
+      <button data-filter="Pause">Pause</button>
+    </div>
+    <div class="result-count"><strong id="visible-count">–</strong> of <span id="total-count">–</span> adsets shown</div>
+  </div>
+
+  <div class="table-shell">
+    <div class="table-scroll">
+      <table>
+        <thead><tr id="head-row"></tr></thead>
+        <tbody id="body"></tbody>
+      </table>
+    </div>
+    <div class="state-msg" id="state-msg" hidden></div>
+  </div>
+
+  <footer>
+    <span>Click any column header to sort · click again to reverse</span>
+    <span id="footer-refresh">Data refreshes automatically each morning</span>
+  </footer>
+
+</div>
+
+<script>
+  const COLUMNS = [
+    { key: "advise",   label: "Advise",                          type: "pill"    },
+    { key: "account",  label: "Ad Account Name",                 type: "text"    },
+    { key: "adset",    label: "Adset Name",                      type: "text"    },
+    { key: "campaign", label: "Campaign Name",                   type: "text"    },
+    { key: "cost5",    label: "Avg Cost/Result (Last 5 Days)",   type: "currency"},
+    { key: "cost10",   label: "Avg Cost/Result (Last 10 Days)",  type: "currency"},
+    { key: "age",      label: "Adset Age (Days)",                type: "number"  },
+    { key: "conv5",    label: "Conversions (Last 5 Days)",       type: "number"  },
+    { key: "conv10",   label: "Conversions (Last 10 Days)",      type: "number"  },
+  ];
+
+  let ROWS = [];
+  let sortKey = null;
+  let sortDir = 1;
+  let activeFilter = "all";
+
+  const headRow = document.getElementById("head-row");
+  const body = document.getElementById("body");
+  const stateMsg = document.getElementById("state-msg");
+
+  function fmtCurrency(v){
+    return "₹" + Number(v).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  function renderHead(){
+    headRow.innerHTML = "";
+    COLUMNS.forEach(col => {
+      const th = document.createElement("th");
+      const isNum = col.type === "number" || col.type === "currency";
+      if (isNum) th.classList.add("num");
+      const btn = document.createElement("button");
+      btn.type = "button";
+      const isSorted = sortKey === col.key;
+      if (isSorted) btn.classList.add("sorted");
+      const arrow = document.createElement("span");
+      arrow.className = "arrow";
+      arrow.textContent = isSorted ? (sortDir === 1 ? "▲" : "▼") : "↕";
+      if (isNum) {
+        btn.appendChild(arrow);
+        btn.appendChild(document.createTextNode(" " + col.label));
+      } else {
+        btn.appendChild(document.createTextNode(col.label + " "));
+        btn.appendChild(arrow);
+      }
+      btn.addEventListener("click", () => {
+        if (sortKey === col.key) { sortDir *= -1; }
+        else { sortKey = col.key; sortDir = isNum ? -1 : 1; }
+        renderHead();
+        renderBody();
+      });
+      th.appendChild(btn);
+      headRow.appendChild(th);
+    });
+  }
+
+  function getFiltered(){
+    if (activeFilter === "all") return ROWS.slice();
+    return ROWS.filter(r => r.advise === activeFilter);
+  }
+
+  function renderBody(){
+    let rows = getFiltered();
+
+    if (sortKey){
+      const col = COLUMNS.find(c => c.key === sortKey);
+      const isNum = col.type === "number" || col.type === "currency";
+      rows.sort((a,b) => {
+        let av = a[sortKey], bv = b[sortKey];
+        if (isNum){ return (av - bv) * sortDir; }
+        return String(av).localeCompare(String(bv)) * sortDir;
+      });
+    }
+
+    body.innerHTML = "";
+    rows.forEach(r => {
+      const tr = document.createElement("tr");
+
+      const tdAdvise = document.createElement("td");
+      const pill = document.createElement("span");
+      pill.className = "pill " + (r.advise === "Keep" ? "keep" : "pause");
+      pill.textContent = r.advise;
+      tdAdvise.appendChild(pill);
+      tr.appendChild(tdAdvise);
+
+      const tdAccount = document.createElement("td");
+      tdAccount.innerHTML = '<span class="account-chip"></span>';
+      tdAccount.querySelector(".account-chip").textContent = r.account;
+      tr.appendChild(tdAccount);
+
+      const tdAdset = document.createElement("td");
+      tdAdset.className = "name-cell";
+      tdAdset.textContent = r.adset;
+      tdAdset.title = r.adset;
+      tr.appendChild(tdAdset);
+
+      const tdCampaign = document.createElement("td");
+      tdCampaign.className = "name-cell";
+      tdCampaign.textContent = r.campaign;
+      tdCampaign.title = r.campaign;
+      tr.appendChild(tdCampaign);
+
+      const tdCost5 = document.createElement("td");
+      tdCost5.className = "num";
+      tdCost5.textContent = fmtCurrency(r.cost5);
+      tr.appendChild(tdCost5);
+
+      const tdCost10 = document.createElement("td");
+      tdCost10.className = "num";
+      tdCost10.textContent = fmtCurrency(r.cost10);
+      tr.appendChild(tdCost10);
+
+      const tdAge = document.createElement("td");
+      tdAge.className = "num age-cell";
+      tdAge.textContent = r.age;
+      tr.appendChild(tdAge);
+
+      const tdConv5 = document.createElement("td");
+      tdConv5.className = "num";
+      tdConv5.textContent = r.conv5;
+      tr.appendChild(tdConv5);
+
+      const tdConv10 = document.createElement("td");
+      tdConv10.className = "num";
+      tdConv10.textContent = r.conv10;
+      tr.appendChild(tdConv10);
+
+      body.appendChild(tr);
+    });
+
+    document.getElementById("visible-count").textContent = rows.length;
+  }
+
+  function renderStats(){
+    document.getElementById("stat-total").textContent = ROWS.length;
+    document.getElementById("stat-keep").textContent = ROWS.filter(r => r.advise === "Keep").length;
+    document.getElementById("stat-pause").textContent = ROWS.filter(r => r.advise === "Pause").length;
+    document.getElementById("total-count").textContent = ROWS.length;
+  }
+
+  document.getElementById("filter-group").addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-filter]");
+    if (!btn) return;
+    activeFilter = btn.dataset.filter;
+    [...document.querySelectorAll("#filter-group button")].forEach(b => b.classList.toggle("active", b === btn));
+    renderBody();
+  });
+
+  async function loadSnapshots(){
+    try{
+      const res = await fetch("/api/snapshots");
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      ROWS = data.rows || [];
+      const tag = document.getElementById("source-tag");
+      const label = document.getElementById("source-label");
+      tag.classList.remove("err");
+      label.textContent = data.reportDate ? ("Synced from D1 · " + data.reportDate) : "Synced from D1";
+      if (ROWS.length === 0){
+        stateMsg.hidden = false;
+        stateMsg.classList.remove("err");
+        stateMsg.textContent = "No adsets in today's snapshot yet — the daily task may not have run.";
+      } else {
+        stateMsg.hidden = true;
+      }
+      renderStats();
+      renderHead();
+      renderBody();
+    } catch(err){
+      const tag = document.getElementById("source-tag");
+      const label = document.getElementById("source-label");
+      tag.classList.add("err");
+      label.textContent = "Failed to load";
+      stateMsg.hidden = false;
+      stateMsg.classList.add("err");
+      stateMsg.textContent = "Couldn't load snapshot data: " + err.message;
+    }
+  }
+
+  async function loadThresholds(){
+    const tbody = document.getElementById("thresh-body");
+    try{
+      const res = await fetch("/api/thresholds");
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      tbody.innerHTML = "";
+      (data.thresholds || []).forEach(t => {
+        const tr = document.createElement("tr");
+        tr.innerHTML =
+          '<td>' + t.product + '</td>' +
+          '<td><input type="number" step="any" class="f-cost5" value="' + t.cost_5d_threshold + '"></td>' +
+          '<td><input type="number" step="any" class="f-purch5" value="' + t.purchase_5d_threshold + '"></td>' +
+          '<td><input type="number" step="any" class="f-cost10" value="' + t.cost_10d_threshold + '"></td>' +
+          '<td><input type="number" step="any" class="f-purch10" value="' + t.purchase_10d_threshold + '"></td>' +
+          '<td><button class="thresh-save">Save</button></td>' +
+          '<td><span class="thresh-status"></span></td>';
+        tr.querySelector(".thresh-save").addEventListener("click", async () => {
+          const statusEl = tr.querySelector(".thresh-status");
+          statusEl.textContent = "Saving…";
+          statusEl.className = "thresh-status";
+          const payload = {
+            product: t.product,
+            cost_5d_threshold: tr.querySelector(".f-cost5").value,
+            purchase_5d_threshold: tr.querySelector(".f-purch5").value,
+            cost_10d_threshold: tr.querySelector(".f-cost10").value,
+            purchase_10d_threshold: tr.querySelector(".f-purch10").value,
+          };
+          try{
+            const r = await fetch("/api/thresholds", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify(payload),
+            });
+            const d = await r.json();
+            if (!r.ok || d.error) throw new Error(d.error || ("HTTP " + r.status));
+            statusEl.textContent = "Saved";
+            statusEl.className = "thresh-status ok";
+            setTimeout(() => { statusEl.textContent = ""; }, 2500);
+          } catch(err){
+            statusEl.textContent = "Failed: " + err.message;
+            statusEl.className = "thresh-status err";
+          }
+        });
+        tbody.appendChild(tr);
+      });
+    } catch(err){
+      tbody.innerHTML = '<tr><td colspan="7" style="color:var(--bad);">Failed to load thresholds: ' + err.message + '</td></tr>';
+    }
+  }
+
+  document.getElementById("toggle-thresholds").addEventListener("click", () => {
+    const panel = document.getElementById("thresholds-panel");
+    panel.hidden = !panel.hidden;
+    if (!panel.hidden) loadThresholds();
+  });
+
+  loadSnapshots();
+</script>
+</body>
+</html>
