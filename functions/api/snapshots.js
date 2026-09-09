@@ -20,5 +20,8 @@ export async function onRequestGet(context) {
   }));
 
   const reportDate = results.length ? results[0].report_date : null;
-  return Response.json({ rows, reportDate });
+  return Response.json(
+    { rows, reportDate },
+    { headers: { "Cache-Control": "no-store" } }
+  );
 }

@@ -379,7 +379,7 @@
 
   async function loadSnapshots(){
     try{
-      const res = await fetch("/api/snapshots");
+      const res = await fetch("/api/snapshots", { cache: "no-store" });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
       ROWS = data.rows || [];
@@ -411,7 +411,7 @@
   async function loadThresholds(){
     const tbody = document.getElementById("thresh-body");
     try{
-      const res = await fetch("/api/thresholds");
+      const res = await fetch("/api/thresholds", { cache: "no-store" });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
       tbody.innerHTML = "";

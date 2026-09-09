@@ -5,7 +5,10 @@ export async function onRequestGet(context) {
      FROM ad_closing_threshold
      ORDER BY product ASC`
   ).all();
-  return Response.json({ thresholds: results });
+  return Response.json(
+    { thresholds: results },
+    { headers: { "Cache-Control": "no-store" } }
+  );
 }
 
 export async function onRequestPost(context) {
