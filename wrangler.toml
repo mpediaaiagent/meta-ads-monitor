@@ -1,0 +1,8 @@
+name = "meta-ads-monitor"
+pages_build_output_dir = "public"
+compatibility_date = "2024-09-23"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "meta-ads-report"
+database_id = "49a148d0-1f38-4ebb-9885-6c5ee40f995e"
