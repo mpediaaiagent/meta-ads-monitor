@@ -28,16 +28,24 @@ This dashboard does **not** pull from Meta's API directly. A separate scheduled 
 
 A second, older, parallel task called **"Daily Meta Ads Report"** builds the same data as a Google Sheet instead of writing to D1. It is intentionally left alone and untouched by the D1 task. **That Sheet is the trusted cross-check** — if the dashboard's numbers ever look wrong (missing adsets, wrong counts), compare against that day's Sheet before assuming the dashboard's D1 data is correct.
 
-### The ad-level table is NOT yet refreshed by the daily task — read this first
+### The second scheduled task: ad-level refresh
 
-`adset_snapshots` is rewritten every night by the scheduled task. **`ad_snapshots` is not.** It was
-backfilled once, by hand, for `report_date` 2026-09-10 (210 ads across all 43 adsets) when the
-drill-down was built. Until the daily task is extended, the drill-down keeps showing that snapshot
-while the adset rows above it move on — so the first thing to check if the ad numbers look stale is
-`SELECT DISTINCT report_date FROM ad_snapshots`.
+`ad_snapshots` is refreshed by its **own** scheduled task, separate from the adset one:
 
-Extending the daily task is the fix. What that task has to do, with the details that cost time to
-work out the first time:
+**"Meta Ads — ad-level refresh (ad_snapshots)"** — trigger id `trig_01U1jiEfav58E2NdbJ5wvcbv`,
+cron `30 3 * * *` (03:30 UTC / 09:00 IST), model claude-sonnet-5, with the
+`Cloudflare_Developer_Platform` and `Meta_MCP` connectors attached.
+Manage it at https://claude.ai/code/routines/trig_01U1jiEfav58E2NdbJ5wvcbv
+
+It runs **one hour after** the 02:30 UTC adset task and depends on it: it reads the adset list
+straight out of `adset_snapshots` and fills in the ads belonging to those adsets, stamping the same
+`report_date` so the two tables stay in lockstep. It writes to `ad_snapshots` and nothing else.
+
+If the drill-down's numbers look stale, check `SELECT DISTINCT report_date FROM ad_snapshots` first —
+if it lags `adset_snapshots`, that task either aborted or failed, and its run log will say which.
+
+The task's full prompt lives in the routine itself. The rest of this section is what that prompt
+encodes — read it before editing the prompt, because most of it is hard-won:
 
 1. **Window**: the same 10 complete days the adset rows use — `since` = report_date − 10 days,
    `until` = report_date − 1 (for report_date 2026-09-10 that is 2026-08-31 → 2026-09-09).
@@ -66,6 +74,12 @@ work out the first time:
    conversions and spend ÷ conversions against `adset_snapshots`. 41 of 43 adsets matched exactly;
    the 2 that didn't were off by one conversion — see "Adset drill-down" below for why that is
    expected rather than a bug.
+7. **Abort rather than write something wrong.** The task refuses to write at all if fewer than 90%
+   of the adsets came back with ads, if any batch is still suspected truncated, or if more than 20%
+   of adsets miss the conversion check by more than 2. A stale-but-complete table beats a
+   half-wiped one, and the previous day's snapshot stays in place. The task's summary must name
+   every adset that ended with zero ads and every batch that errored — silence is exactly how the
+   adset undercount bug below hid itself.
 
 ### Adset undercount bug — already found and fixed; know this before debugging a similar issue
 
@@ -257,11 +271,10 @@ ads-monitor-project/
 - Fixed the D1 undercount bug and the caching bug; added sticky columns; fixed the "Edite Thresholds" typo.
 - Removed the Keep/Pause stat tiles, replaced the per-row threshold Save buttons with a single Save, removed the page's `max-width`, and fixed the always-open thresholds panel.
 - Added content-sized, resizable columns and drag-to-pan, and the ad-level adset drill-down
-  (`ad_snapshots` + `/api/ads`), backfilled once from the Meta API for 2026-09-10.
+  (`ad_snapshots` + `/api/ads`), backfilled once from the Meta API for 2026-09-10, then put on a
+  daily footing with its own scheduled task at 03:30 UTC.
 
 ## Open items
 
-- **Extend the daily task to refresh `ad_snapshots`** — see the section above. Until then the
-  drill-down serves the 2026-09-10 backfill regardless of what the adset rows say.
 - Confirm the D1 binding survived the most recent Git-connected redeploy (Cloudflare dashboard → Settings → Functions).
 - If the daily D1 task's adset count ever looks wrong again, cross-check against that day's Google Sheet report before assuming the dashboard is broken — that Sheet is the ground truth.
