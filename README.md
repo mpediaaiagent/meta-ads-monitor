@@ -218,11 +218,12 @@ one column per day showing that day's spend with its conversions underneath. A t
 out, and its CPP should match the adset row's own `cost_10d` to the paisa.
 
 - Data comes from `GET /api/ads`, fetched on first expand and cached per adset for the session.
-- **The panel's columns are laid out by `layoutAdsTable`, not by content.** The five leading columns
-  are fixed (`ADS_FIXED_W`), every day column gets one identical width, and a trailing spacer `<col>`
-  soaks up whatever is left so the grid fills the panel without one lonely day column stretching
-  across it. Day width is clamped between `ADS_MIN_DAY_W` and `ADS_MAX_DAY_W`; past that the panel
-  scrolls. It re-runs on resize via `syncDetailWidths`.
+- **The panel's columns are laid out by `layoutAdsTable`, not by content.** It starts from a base
+  ratio (`ADS_FIXED_W` for the five leading columns, `ADS_DAY_W` per day), then hands the spare room
+  out evenly — the same pixel count to every column — so the table fills the panel edge to edge and
+  all day columns stay identical to one another. Rounding drift goes to the name column so the day
+  columns stay exactly equal. If the base ratio is already wider than the panel the base widths hold
+  and the panel scrolls. Re-runs on resize via `syncDetailWidths`.
 - Ad status is a coloured dot before the name, not a badge after it: the name cell ellipsises, so a
   trailing badge vanished on exactly the long names you most want to identify.
 - Watch out for `tr.detail-row > td` — as a *descendant* selector (`tr.detail-row td`) it outranks

@@ -670,9 +670,8 @@
 
   // ad name, started, spend, conv, cpp — the day columns then share whatever is left,
   // all at one identical width, so the day grid reads as an even ladder
-  const ADS_FIXED_W = [220, 74, 92, 58, 82];
-  const ADS_MIN_DAY_W = 66;
-  const ADS_MAX_DAY_W = 128;
+  const ADS_FIXED_W = [220, 74, 92, 58, 82];   // ad name, started, spend, conv, cpp
+  const ADS_DAY_W = 96;
 
   function layoutAdsTable(inner){
     const t = inner.querySelector(".ads-table");
@@ -680,23 +679,26 @@
     const cols = t.querySelectorAll("colgroup col");
     const dayCount = t.querySelectorAll("thead th.day").length;
     if (!cols.length) return;
-    const fixedTotal = ADS_FIXED_W.reduce((a, b) => a + b, 0);
+
+    // Start from the base ratio, then hand any spare room out evenly — the same number of
+    // pixels to every column — so the table always fills the panel edge to edge and the day
+    // columns stay identical to one another. If the base is already wider than the panel we
+    // keep the base widths and let the panel scroll.
+    const base = ADS_FIXED_W.concat(new Array(dayCount).fill(ADS_DAY_W));
+    const total = base.reduce((a, b) => a + b, 0);
     const avail = Math.max(360, (inner.clientWidth || scrollEl.clientWidth) - 34);
-    // every day column gets the same width: share out the spare room, but never past the cap
-    const dayW = dayCount
-      ? Math.min(ADS_MAX_DAY_W, Math.max(ADS_MIN_DAY_W, Math.floor((avail - fixedTotal) / dayCount)))
-      : 0;
-    ADS_FIXED_W.forEach((w, i) => { if (cols[i]) cols[i].style.width = w + "px"; });
-    for (let i = 0; i < dayCount; i++){
-      const c = cols[ADS_FIXED_W.length + i];
-      if (c) c.style.width = dayW + "px";
+
+    let widths = base;
+    if (total < avail){
+      const per = Math.floor((avail - total) / base.length);
+      widths = base.map(w => w + per);
+      // rounding drift goes to the name column, so every day column stays exactly equal
+      widths[0] += avail - widths.reduce((a, b) => a + b, 0);
     }
-    const total = fixedTotal + dayW * dayCount;
+
+    widths.forEach((w, i) => { if (cols[i]) cols[i].style.width = w + "px"; });
     t.style.tableLayout = "fixed";
-    // the last <col> carries no width: under fixed layout it soaks up any remaining room,
-    // so a two-day adset keeps tidy columns instead of one enormous one. When the grid is
-    // wider than the panel we pin the px width instead and let the panel scroll.
-    t.style.width = total < avail ? "100%" : total + "px";
+    t.style.width = widths.reduce((a, b) => a + b, 0) + "px";
   }
 
   function syncDetailWidths(){
@@ -827,8 +829,8 @@
     t.className = "ads-table";
 
     const cg = document.createElement("colgroup");
-    for (let i = 0; i < ADS_FIXED_W.length + days.length + 1; i++){
-      cg.appendChild(document.createElement("col"));   // +1: trailing spacer
+    for (let i = 0; i < ADS_FIXED_W.length + days.length; i++){
+      cg.appendChild(document.createElement("col"));
     }
     t.appendChild(cg);
 
@@ -853,7 +855,6 @@
       th.textContent = fmtDay(d);
       hr.appendChild(th);
     });
-    hr.appendChild(document.createElement("th"));   // spacer
     thead.appendChild(hr);
     t.appendChild(thead);
 
@@ -920,7 +921,6 @@
         }
         r.appendChild(cell);
       });
-      r.appendChild(document.createElement("td"));   // spacer
 
       tb.appendChild(r);
     });
@@ -964,7 +964,6 @@
       }
       fr.appendChild(cell);
     });
-    fr.appendChild(document.createElement("td"));   // spacer
     tfoot.appendChild(fr);
     t.appendChild(tfoot);
 
