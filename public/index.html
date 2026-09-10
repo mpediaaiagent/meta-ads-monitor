@@ -102,17 +102,30 @@
   .result-count strong{color:var(--text);}
 
   .table-shell{ background:var(--surface); border:1px solid var(--border); border-radius:12px; overflow:hidden; box-shadow:var(--shadow); }
-  .table-scroll{ overflow-x:auto; }
-  table{ border-collapse:collapse; width:100%; min-width:980px; font-family:"IBM Plex Mono",monospace; font-size:13px; }
+  /* drag-to-pan: grab anywhere on the table and swipe sideways */
+  .table-scroll{ overflow-x:auto; overscroll-behavior-x:contain; }
+  .table-scroll.panning{ cursor:grabbing; user-select:none; }
+  /* width:max-content lets every column take only the width its content needs; JS then
+     measures those natural widths once and freezes them into <col> elements (table-layout
+     switches to fixed) so columns can be resized exactly and the sticky offsets stay in sync. */
+  table{ border-collapse:collapse; width:max-content; min-width:100%; font-family:"IBM Plex Mono",monospace; font-size:13px; }
   thead th{ position:sticky; top:0; background:var(--surface-alt); border-bottom:1px solid var(--border); z-index:1; text-align:left; padding:0; }
-  th button{ appearance:none; width:100%; border:none; background:transparent; font-family:"Manrope",sans-serif; font-weight:700; font-size:11.5px; letter-spacing:0.05em; text-transform:uppercase; color:var(--text-muted); padding:11px 14px; display:flex; align-items:center; gap:6px; cursor:pointer; white-space:nowrap; }
+  th{ position:relative; }
+  /* column resize grip on the right edge of every header cell */
+  .col-resizer{ position:absolute; top:0; right:0; width:9px; height:100%; cursor:col-resize; z-index:5; touch-action:none; }
+  .col-resizer::after{ content:""; position:absolute; right:4px; top:22%; height:56%; width:1px; background:var(--border); transition:background .15s ease; }
+  .col-resizer:hover::after, .col-resizer.dragging::after{ background:var(--accent); width:2px; }
+  th button{ appearance:none; width:100%; border:none; background:transparent; font-family:"Manrope",sans-serif; font-weight:700; font-size:11.5px; letter-spacing:0.05em; text-transform:uppercase; color:var(--text-muted); padding:10px 12px; display:flex; align-items:flex-start; gap:6px; cursor:pointer; text-align:left; line-height:1.3; overflow:hidden; }
+  th button .lbl{ min-width:0; overflow-wrap:break-word; }
+  th.num button{ text-align:right; }
+  th.num button .lbl{ text-align:right; }
   th button:hover{color:var(--text);}
-  th.num button{justify-content:flex-end;}
+  th.num button{ justify-content:flex-end; }
   th .arrow{ font-size:10px; opacity:0.35; transition:opacity .15s ease; }
   th button.sorted .arrow{opacity:1;color:var(--accent);}
   th button.sorted{color:var(--text);}
 
-  tbody td{ padding:10px 14px; border-bottom:1px solid var(--border); white-space:nowrap; vertical-align:middle; }
+  tbody td{ padding:9px 12px; border-bottom:1px solid var(--border); white-space:nowrap; vertical-align:middle; overflow:hidden; text-overflow:ellipsis; }
   tbody tr:last-child td{border-bottom:none;}
   tbody tr:nth-child(even){background:var(--surface-alt);}
   tbody tr:hover{background:var(--row-hover);}
@@ -123,10 +136,12 @@
   /* ---------- pinned leading columns ---------- */
   /* Fixed widths so each sticky column knows its own left offset. Cell content is
      truncated by .truncate so a long name can never widen the column and shift them. */
+  /* Widths live on the <col> elements (JS-measured, user-resizable); these rules only place
+     each pinned column, using offsets JS keeps in sync with the current widths. */
   th.pinned, td.pinned{ position:sticky; }
-  th.pin-1, td.pin-1{ left:0; width:var(--w-advise); min-width:var(--w-advise); max-width:var(--w-advise); }
-  th.pin-2, td.pin-2{ left:var(--w-advise); width:var(--w-account); min-width:var(--w-account); max-width:var(--w-account); }
-  th.pin-3, td.pin-3{ left:calc(var(--w-advise) + var(--w-account)); width:var(--w-adset); min-width:var(--w-adset); max-width:var(--w-adset); box-shadow:inset -1px 0 0 var(--border); }
+  th.pin-1, td.pin-1{ left:0; }
+  th.pin-2, td.pin-2{ left:var(--w-advise); }
+  th.pin-3, td.pin-3{ left:calc(var(--w-advise) + var(--w-account)); box-shadow:inset -1px 0 0 var(--border); }
   /* pinned header cells sit above pinned body cells, which sit above scrolling cells */
   thead th.pinned{ z-index:3; }
   thead th.pinned button{ overflow:hidden; }
@@ -134,9 +149,7 @@
   tbody td.pinned{ z-index:2; background:var(--surface); }
   tbody tr:nth-child(even) td.pinned{ background:var(--surface-alt); }
   tbody tr:hover td.pinned{ background:var(--row-hover); }
-  .truncate{ display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  td.pin-2 .truncate{ max-width:calc(var(--w-account) - 28px); }
-  td.pin-3 .truncate{ max-width:calc(var(--w-adset) - 28px); }
+  .truncate{ display:block; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
   .pill{ display:inline-flex; align-items:center; gap:5px; padding:3px 10px 3px 8px; border-radius:99px; font-family:"Manrope",sans-serif; font-weight:700; font-size:11.5px; letter-spacing:0.03em; border:1px solid transparent; }
   .pill::before{content:"";width:6px;height:6px;border-radius:50%;}
@@ -146,6 +159,37 @@
   .pill.pause::before{background:var(--warn);}
 
   .account-chip{ font-family:"Manrope",sans-serif; font-weight:600; font-size:12.5px; color:var(--text); }
+
+  /* ---------- adset drill-down ---------- */
+  td.pin-3{ cursor:pointer; }
+  .adset-toggle{ display:flex; align-items:center; gap:7px; min-width:0; }
+  .adset-toggle .chev{ flex:none; width:13px; color:var(--text-muted); font-size:10px; transition:transform .15s ease; }
+  tr.expanded td.pin-3 .chev{ transform:rotate(90deg); color:var(--accent); }
+  tr.expanded td.pinned{ background:var(--accent-soft); }
+  tr.detail-row td{ padding:0; border-bottom:1px solid var(--border); background:var(--surface-alt); white-space:normal; overflow:visible; }
+  /* sticky so the panel stays on screen no matter how far the table is scrolled sideways */
+  .detail-inner{ position:sticky; left:0; padding:14px 16px 16px; }
+  .detail-head{ display:flex; flex-wrap:wrap; align-items:baseline; gap:10px; margin-bottom:10px; }
+  .detail-head h3{ margin:0; font-family:"Manrope",sans-serif; font-size:13px; font-weight:800; }
+  .detail-head .meta{ font-size:11.5px; color:var(--text-muted); }
+  .detail-note{ font-size:11px; color:var(--warn); margin-bottom:8px; }
+  .detail-scroll{ overflow-x:auto; border:1px solid var(--border); border-radius:8px; background:var(--surface); }
+  .ads-table{ border-collapse:collapse; width:max-content; min-width:100%; font-size:12px; }
+  .ads-table th{ position:static; background:var(--surface-alt); text-align:left; font-family:"Manrope",sans-serif; font-weight:700; font-size:10px; letter-spacing:0.05em; text-transform:uppercase; color:var(--text-muted); padding:7px 10px; border-bottom:1px solid var(--border); white-space:nowrap; }
+  .ads-table th.day, .ads-table th.num{ text-align:right; }
+  .ads-table td{ padding:7px 10px; border-bottom:1px solid var(--border); white-space:nowrap; }
+  .ads-table tbody tr:last-child td{ border-bottom:none; }
+  .ads-table tbody tr:hover{ background:var(--row-hover); }
+  .ads-table td.ad-name{ font-family:"IBM Plex Mono",monospace; max-width:300px; overflow:hidden; text-overflow:ellipsis; }
+  .ads-table td.num{ text-align:right; font-variant-numeric:tabular-nums; }
+  .ads-table td.day{ text-align:right; font-variant-numeric:tabular-nums; color:var(--text-muted); }
+  .ads-table td.day.spent{ color:var(--text); }
+  .ads-table td.day .cv{ display:block; font-size:10px; font-weight:700; color:var(--good); }
+  .ads-table tfoot td{ font-weight:700; background:var(--surface-alt); border-top:1px solid var(--border); border-bottom:none; }
+  .ad-status{ display:inline-block; margin-left:6px; padding:1px 6px; border-radius:99px; font-family:"Manrope",sans-serif; font-size:9.5px; font-weight:700; letter-spacing:0.04em; border:1px solid var(--border); color:var(--text-muted); }
+  .ad-status.live{ color:var(--good); border-color:var(--good-border); background:var(--good-bg); }
+  .detail-state{ padding:12px 2px; font-size:12.5px; color:var(--text-muted); }
+  .detail-state.err{ color:var(--bad); }
 
   footer{ display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px; color:var(--text-muted); font-size:12px; }
 
@@ -175,15 +219,10 @@
   .state-msg{ padding:40px 20px; text-align:center; color:var(--text-muted); font-size:14px; }
   .state-msg.err{ color:var(--bad); }
 
-  /* narrower pins so the scrolling section keeps room on small screens */
-  @media (max-width:900px){
-    :root{ --w-advise:96px; --w-account:140px; --w-adset:180px; }
-  }
   /* below this the three pins would eat the whole viewport — let them scroll instead */
   @media (max-width:700px){
-    th.pinned, td.pinned{ position:static; width:auto; min-width:0; max-width:none; }
+    th.pinned, td.pinned{ position:static; }
     th.pin-3, td.pin-3{ box-shadow:none; }
-    td.pin-2 .truncate, td.pin-3 .truncate{ max-width:none; }
   }
 
   @media (max-width:640px){ .title-block h1{font-size:22px;} }
@@ -254,27 +293,30 @@
   </div>
 
   <footer>
-    <span>Click any column header to sort · click again to reverse</span>
+    <span>Click an adset name to see its ads · drag the table sideways to pan · drag a column edge to resize</span>
     <span id="footer-refresh">Data refreshes automatically each morning</span>
   </footer>
 
 </div>
 
 <script>
+  // max: the widest a column may be sized to when its natural content width is measured.
+  // flex: the column that absorbs any leftover space so the table fills the shell.
   const COLUMNS = [
-    { key: "advise",   label: "Advise",                          type: "pill"    },
-    { key: "account",  label: "Ad Account Name",                 type: "text"    },
-    { key: "adset",    label: "Adset Name",                      type: "text"    },
-    { key: "campaign", label: "Campaign Name",                   type: "text"    },
-    { key: "cost5",    label: "Avg Cost/Result (Last 5 Days)",   type: "currency"},
-    { key: "cost10",   label: "Avg Cost/Result (Last 10 Days)",  type: "currency"},
-    { key: "age",      label: "Adset Age (Days)",                type: "number"  },
-    { key: "conv5",    label: "Conversions (Last 5 Days)",       type: "number"  },
-    { key: "conv10",   label: "Conversions (Last 10 Days)",      type: "number"  },
+    { key: "advise",   label: "Advise",                          type: "pill",     min: 96,  max: 130 },
+    { key: "account",  label: "Ad Account Name",                 type: "text",     min: 120, max: 200 },
+    { key: "adset",    label: "Adset Name",                      type: "text",     min: 170, max: 330 },
+    { key: "campaign", label: "Campaign Name",                   type: "text",     min: 170, max: 340, flex: true },
+    { key: "cost5",    label: "Avg Cost/Result (Last 5 Days)",   type: "currency", min: 104, max: 210 },
+    { key: "cost10",   label: "Avg Cost/Result (Last 10 Days)",  type: "currency", min: 104, max: 210 },
+    { key: "age",      label: "Adset Age (Days)",                type: "number",   min: 84,  max: 150 },
+    { key: "conv5",    label: "Conversions (Last 5 Days)",       type: "number",   min: 92,  max: 190 },
+    { key: "conv10",   label: "Conversions (Last 10 Days)",      type: "number",   min: 92,  max: 190 },
   ];
 
   // The first three columns are frozen when the table scrolls horizontally.
   const PINNED_COUNT = 3;
+  const MIN_COL_W = 62;
 
   let ROWS = [];
   let sortKey = null;
@@ -284,13 +326,174 @@
   const headRow = document.getElementById("head-row");
   const body = document.getElementById("body");
   const stateMsg = document.getElementById("state-msg");
+  const scrollEl = document.querySelector(".table-scroll");
+  const table = scrollEl.querySelector("table");
+
+  let colGroup = null;
+  let colWidths = null;      // widths currently applied, in px
+  let defaultWidths = null;  // the measured defaults, restored on reset
+  let userResized = false;
 
   function fmtCurrency(v){
     return "₹" + Number(v).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
+  // whole rupees keep the day grid narrow, but anything under ₹1 would read as a
+  // misleading "₹0", so small amounts keep their paise
+  function fmtMoney0(v){
+    const n = Number(v) || 0;
+    if (n > 0 && n < 1) return "₹" + n.toFixed(2);
+    return "₹" + Math.round(n).toLocaleString("en-IN");
+  }
+  function fmtDay(iso){
+    const d = new Date(iso + "T00:00:00");
+    return isNaN(d) ? iso : d.toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
+  }
+
+  /* ---------- column widths ---------- */
+
+  // Size every column to exactly what its content needs: let the browser lay the table out
+  // naturally, read the width each column asked for, then freeze those numbers.
+  function measureColumns(){
+    const details = [...body.querySelectorAll("tr.detail-row")];
+    details.forEach(d => { d.style.display = "none"; });
+    const thead = table.querySelector("thead");
+    // hide the header while measuring: the labels are far longer than the values, and a
+    // column only needs to be as wide as its data (the label wraps to fit whatever it gets)
+    thead.style.display = "none";
+    table.style.tableLayout = "auto";
+    table.style.width = "max-content";
+    colGroup.querySelectorAll("col").forEach(c => { c.style.width = ""; });
+    const firstRow = body.querySelector("tr[data-key]");
+    const cells = firstRow ? [...firstRow.children] : [];
+    const natural = COLUMNS.map((c, i) => cells[i] ? cells[i].getBoundingClientRect().width : 110);
+    thead.style.display = "";
+    details.forEach(d => { d.style.display = ""; });
+    return natural.map((w, i) => Math.max(COLUMNS[i].min || MIN_COL_W,
+                                          Math.min(Math.ceil(w) + 2, COLUMNS[i].max || 220)));
+  }
+
+  function applyWidths(widths){
+    colWidths = widths.slice();
+    const cols = colGroup.querySelectorAll("col");
+    colWidths.forEach((w, i) => { if (cols[i]) cols[i].style.width = w + "px"; });
+    table.style.tableLayout = "fixed";
+    table.style.width = colWidths.reduce((t, w) => t + w, 0) + "px";
+    // the sticky columns' left offsets have to follow whatever the widths are now
+    table.style.setProperty("--w-advise", colWidths[0] + "px");
+    table.style.setProperty("--w-account", colWidths[1] + "px");
+    table.style.setProperty("--w-adset", colWidths[2] + "px");
+    syncDetailWidths();
+  }
+
+  function fitColumns(){
+    if (!ROWS.length) return;
+    const w = measureColumns();
+    const total = w.reduce((t, x) => t + x, 0);
+    const avail = scrollEl.clientWidth - 1;
+    if (total < avail){
+      const fi = COLUMNS.findIndex(c => c.flex);
+      w[fi >= 0 ? fi : w.length - 1] += avail - total;
+    }
+    defaultWidths = w.slice();
+    applyWidths(w);
+  }
+
+  function resetColumns(){
+    userResized = false;
+    colWidths = null;
+    table.style.tableLayout = "";
+    table.style.width = "";
+    colGroup.querySelectorAll("col").forEach(c => { c.style.width = ""; });
+    fitColumns();
+  }
+
+  // drag a header's right edge to resize that column; double-click it to reset them all
+  headRow.addEventListener("pointerdown", (e) => {
+    const grip = e.target.closest(".col-resizer");
+    if (!grip || e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (!colWidths) fitColumns();
+    if (!colWidths) return;
+    const i = Number(grip.dataset.col);
+    const startX = e.clientX;
+    const startW = colWidths[i];
+    grip.classList.add("dragging");
+    grip.setPointerCapture(e.pointerId);
+    const move = (ev) => {
+      const w = colWidths.slice();
+      w[i] = Math.max(MIN_COL_W, Math.round(startW + (ev.clientX - startX)));
+      userResized = true;
+      applyWidths(w);
+    };
+    const up = () => {
+      grip.classList.remove("dragging");
+      grip.removeEventListener("pointermove", move);
+      grip.removeEventListener("pointerup", up);
+      grip.removeEventListener("pointercancel", up);
+    };
+    grip.addEventListener("pointermove", move);
+    grip.addEventListener("pointerup", up);
+    grip.addEventListener("pointercancel", up);
+  });
+
+  headRow.addEventListener("dblclick", (e) => {
+    if (!e.target.closest(".col-resizer")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    resetColumns();
+  });
+
+  /* ---------- drag / swipe to pan the table sideways ---------- */
+
+  let pan = null;
+  let suppressClick = false;
+
+  scrollEl.addEventListener("pointerdown", (e) => {
+    if (e.pointerType !== "mouse" || e.button !== 0) return;
+    if (e.target.closest(".col-resizer")) return;
+    if (e.target.closest(".detail-scroll")) return;   // the drill-down has its own scroller
+    pan = { x: e.clientX, y: e.clientY, left: scrollEl.scrollLeft, active: false };
+  });
+
+  window.addEventListener("pointermove", (e) => {
+    if (!pan) return;
+    const dx = e.clientX - pan.x;
+    const dy = e.clientY - pan.y;
+    if (!pan.active){
+      // only take over once the movement is clearly a sideways drag, so clicks and
+      // vertical page scrolling still behave normally
+      if (Math.abs(dx) < 5 || Math.abs(dx) <= Math.abs(dy)) return;
+      pan.active = true;
+      scrollEl.classList.add("panning");
+    }
+    scrollEl.scrollLeft = pan.left - dx;
+    e.preventDefault();
+  });
+
+  function endPan(){
+    if (!pan) return;
+    const wasDrag = pan.active;
+    pan = null;
+    scrollEl.classList.remove("panning");
+    if (wasDrag){
+      // swallow the click that ends a drag, so panning never toggles a row
+      suppressClick = true;
+      setTimeout(() => { suppressClick = false; }, 0);
+    }
+  }
+  window.addEventListener("pointerup", endPan);
+  window.addEventListener("pointercancel", endPan);
+
+  /* ---------- table rendering ---------- */
 
   function renderHead(){
     headRow.innerHTML = "";
+    if (colGroup) colGroup.remove();
+    colGroup = document.createElement("colgroup");
+    COLUMNS.forEach(() => colGroup.appendChild(document.createElement("col")));
+    table.insertBefore(colGroup, table.firstChild);
+
     COLUMNS.forEach((col, i) => {
       const th = document.createElement("th");
       const isNum = col.type === "number" || col.type === "currency";
@@ -303,22 +506,35 @@
       const arrow = document.createElement("span");
       arrow.className = "arrow";
       arrow.textContent = isSorted ? (sortDir === 1 ? "▲" : "▼") : "↕";
+      const lbl = document.createElement("span");
+      lbl.className = "lbl";
+      lbl.textContent = col.label;
       if (isNum) {
         btn.appendChild(arrow);
-        btn.appendChild(document.createTextNode(" " + col.label));
+        btn.appendChild(lbl);
       } else {
-        btn.appendChild(document.createTextNode(col.label + " "));
+        btn.appendChild(lbl);
         btn.appendChild(arrow);
       }
       btn.addEventListener("click", () => {
+        if (suppressClick) return;
         if (sortKey === col.key) { sortDir *= -1; }
         else { sortKey = col.key; sortDir = isNum ? -1 : 1; }
         renderHead();
         renderBody();
       });
       th.appendChild(btn);
+
+      const grip = document.createElement("span");
+      grip.className = "col-resizer";
+      grip.dataset.col = i;
+      grip.title = "Drag to resize this column · double-click to reset all";
+      th.appendChild(grip);
+
       headRow.appendChild(th);
     });
+
+    if (colWidths) applyWidths(colWidths);
   }
 
   function getFiltered(){
@@ -342,6 +558,11 @@
     body.innerHTML = "";
     rows.forEach(r => {
       const tr = document.createElement("tr");
+      tr.dataset.key = rowKey(r);
+      tr.dataset.account = r.account;
+      tr.dataset.adset = r.adset;
+      tr.dataset.campaign = r.campaign;
+      tr.dataset.conv10 = r.conv10;
 
       const tdAdvise = document.createElement("td");
       tdAdvise.className = "pinned pin-1";
@@ -353,19 +574,28 @@
 
       const tdAccount = document.createElement("td");
       tdAccount.className = "pinned pin-2";
-      tdAccount.innerHTML = '<span class="account-chip truncate"></span>';
-      tdAccount.querySelector(".account-chip").textContent = r.account;
+      const acct = document.createElement("span");
+      acct.className = "account-chip truncate";
+      acct.textContent = r.account;
+      tdAccount.appendChild(acct);
       tdAccount.title = r.account;
       tr.appendChild(tdAccount);
 
+      // clicking this cell opens the ad-level breakdown for the adset
       const tdAdset = document.createElement("td");
       tdAdset.className = "name-cell pinned pin-3";
-      // inner span carries the ellipsis; the title stays on the cell for the hover tooltip
+      const toggle = document.createElement("span");
+      toggle.className = "adset-toggle";
+      const chev = document.createElement("span");
+      chev.className = "chev";
+      chev.textContent = "▶";
       const adsetText = document.createElement("span");
       adsetText.className = "truncate";
       adsetText.textContent = r.adset;
-      tdAdset.appendChild(adsetText);
-      tdAdset.title = r.adset;
+      toggle.appendChild(chev);
+      toggle.appendChild(adsetText);
+      tdAdset.appendChild(toggle);
+      tdAdset.title = r.adset + " — click to see its ads";
       tr.appendChild(tdAdset);
 
       const tdCampaign = document.createElement("td");
@@ -403,12 +633,254 @@
     });
 
     document.getElementById("visible-count").textContent = rows.length;
+
+    // re-open whatever the user had expanded before the sort or filter changed
+    const reopen = [...openRows];
+    openRows.clear();
+    [...body.querySelectorAll("tr[data-key]")].forEach(tr => {
+      if (reopen.includes(tr.dataset.key)) toggleDetail(tr);
+    });
   }
 
   function renderStats(){
     document.getElementById("stat-total").textContent = ROWS.length;
     document.getElementById("total-count").textContent = ROWS.length;
   }
+
+  /* ---------- ad-level drill-down ---------- */
+
+  const detailCache = new Map();
+  const openRows = new Set();
+
+  function rowKey(r){ return r.account + "|" + r.adset + "|" + r.campaign; }
+
+  function syncDetailWidths(){
+    const w = scrollEl.clientWidth;
+    body.querySelectorAll(".detail-inner").forEach(el => { el.style.width = w + "px"; });
+  }
+
+  function toggleDetail(tr){
+    const key = tr.dataset.key;
+    if (openRows.has(key)){
+      openRows.delete(key);
+      tr.classList.remove("expanded");
+      const next = tr.nextElementSibling;
+      if (next && next.classList.contains("detail-row")) next.remove();
+      return;
+    }
+    openRows.add(key);
+    tr.classList.add("expanded");
+
+    const detail = document.createElement("tr");
+    detail.className = "detail-row";
+    const td = document.createElement("td");
+    td.colSpan = COLUMNS.length;
+    const inner = document.createElement("div");
+    inner.className = "detail-inner";
+    inner.style.width = scrollEl.clientWidth + "px";
+    const loading = document.createElement("div");
+    loading.className = "detail-state";
+    loading.textContent = "Loading ads…";
+    inner.appendChild(loading);
+    td.appendChild(inner);
+    detail.appendChild(td);
+    tr.after(detail);
+
+    loadDetail(tr, inner);
+  }
+
+  async function loadDetail(tr, inner){
+    const key = tr.dataset.key;
+    try{
+      let data = detailCache.get(key);
+      if (!data){
+        const qs = new URLSearchParams({
+          account: tr.dataset.account,
+          adset: tr.dataset.adset,
+          campaign: tr.dataset.campaign,
+        });
+        const res = await fetch("/api/ads?" + qs.toString(), { cache: "no-store" });
+        data = await res.json();
+        if (!res.ok || data.error) throw new Error(data.error || ("HTTP " + res.status));
+        detailCache.set(key, data);
+      }
+      if (inner.isConnected) renderDetail(inner, data, tr);
+    } catch(err){
+      inner.innerHTML = "";
+      const msg = document.createElement("div");
+      msg.className = "detail-state err";
+      msg.textContent = "Couldn't load ads: " + err.message;
+      inner.appendChild(msg);
+    }
+  }
+
+  function renderDetail(inner, data, tr){
+    inner.innerHTML = "";
+    const ads = data.ads || [];
+    const dates = data.dates || [];
+
+    const head = document.createElement("div");
+    head.className = "detail-head";
+    const h3 = document.createElement("h3");
+    h3.textContent = ads.length + (ads.length === 1 ? " ad in " : " ads in ") + tr.dataset.adset;
+    head.appendChild(h3);
+    if (dates.length){
+      const meta = document.createElement("span");
+      meta.className = "meta";
+      meta.textContent = "day-by-day spend and conversions · " + fmtDay(dates[0]) + " – " + fmtDay(dates[dates.length - 1]);
+      head.appendChild(meta);
+    }
+    inner.appendChild(head);
+
+    if (!ads.length){
+      const empty = document.createElement("div");
+      empty.className = "detail-state";
+      empty.textContent = "No ad-level rows stored for this adset in the latest snapshot.";
+      inner.appendChild(empty);
+      return;
+    }
+
+    // Meta attributes a few conversions at adset level that it can't pin to one ad, so the
+    // per-ad numbers can come up a conversion or two short of the adset row. Say so plainly.
+    const convSum = ads.reduce((t, x) => t + (x.conv10 || 0), 0);
+    const rowConv = Number(tr.dataset.conv10);
+    if (Number.isFinite(rowConv) && convSum !== rowConv){
+      const note = document.createElement("div");
+      note.className = "detail-note";
+      note.textContent = "These ads total " + convSum + " conversions against " + rowConv +
+        " on the adset row — Meta attributes some conversions at adset level without assigning them to a single ad.";
+      inner.appendChild(note);
+    }
+
+    const wrap = document.createElement("div");
+    wrap.className = "detail-scroll";
+    const t = document.createElement("table");
+    t.className = "ads-table";
+
+    const thead = document.createElement("thead");
+    const hr = document.createElement("tr");
+    [["Ad name", ""], ["Started", ""], ["Spend (10d)", "num"], ["Conv (10d)", "num"]].forEach(([label, cls]) => {
+      const th = document.createElement("th");
+      if (cls) th.className = cls;
+      th.textContent = label;
+      hr.appendChild(th);
+    });
+    dates.forEach(d => {
+      const th = document.createElement("th");
+      th.className = "day";
+      th.textContent = fmtDay(d);
+      hr.appendChild(th);
+    });
+    thead.appendChild(hr);
+    t.appendChild(thead);
+
+    const tb = document.createElement("tbody");
+    ads.forEach(ad => {
+      const r = document.createElement("tr");
+
+      const nameTd = document.createElement("td");
+      nameTd.className = "ad-name";
+      nameTd.title = ad.name;
+      nameTd.textContent = ad.name;
+      if (ad.status){
+        const badge = document.createElement("span");
+        badge.className = "ad-status" + (ad.status === "ACTIVE" ? " live" : "");
+        badge.textContent = ad.status === "ACTIVE" ? "Active" : "Paused";
+        nameTd.appendChild(badge);
+      }
+      r.appendChild(nameTd);
+
+      const startTd = document.createElement("td");
+      startTd.textContent = ad.started ? fmtDay(ad.started) + " " + ad.started.slice(0, 4) : "—";
+      startTd.title = ad.started || "";
+      r.appendChild(startTd);
+
+      const spendTd = document.createElement("td");
+      spendTd.className = "num";
+      spendTd.textContent = fmtCurrency(ad.spend10 || 0);
+      r.appendChild(spendTd);
+
+      const convTd = document.createElement("td");
+      convTd.className = "num";
+      convTd.textContent = ad.conv10 || 0;
+      r.appendChild(convTd);
+
+      const byDate = new Map((ad.daily || []).map(d => [d.d, d]));
+      dates.forEach(d => {
+        const cell = document.createElement("td");
+        const point = byDate.get(d);
+        const spend = point ? point.s : 0;
+        cell.className = "day" + (spend > 0 ? " spent" : "");
+        cell.textContent = spend > 0 ? fmtMoney0(spend) : "–";
+        if (point && point.c > 0){
+          const cv = document.createElement("span");
+          cv.className = "cv";
+          cv.textContent = point.c + (point.c === 1 ? " conv" : " convs");
+          cell.appendChild(cv);
+        }
+        r.appendChild(cell);
+      });
+
+      tb.appendChild(r);
+    });
+    t.appendChild(tb);
+
+    const tfoot = document.createElement("tfoot");
+    const fr = document.createElement("tr");
+    const flabel = document.createElement("td");
+    flabel.textContent = "All ads";
+    fr.appendChild(flabel);
+    fr.appendChild(document.createElement("td"));
+    const fspend = document.createElement("td");
+    fspend.className = "num";
+    fspend.textContent = fmtCurrency(ads.reduce((t2, x) => t2 + (x.spend10 || 0), 0));
+    fr.appendChild(fspend);
+    const fconv = document.createElement("td");
+    fconv.className = "num";
+    fconv.textContent = convSum;
+    fr.appendChild(fconv);
+    dates.forEach(d => {
+      const cell = document.createElement("td");
+      cell.className = "day";
+      const daySpend = ads.reduce((t2, x) => {
+        const pt = (x.daily || []).find(p => p.d === d);
+        return t2 + (pt ? pt.s : 0);
+      }, 0);
+      const dayConv = ads.reduce((t2, x) => {
+        const pt = (x.daily || []).find(p => p.d === d);
+        return t2 + (pt ? pt.c : 0);
+      }, 0);
+      cell.textContent = daySpend > 0 ? fmtMoney0(daySpend) : "–";
+      if (dayConv > 0){
+        const cv = document.createElement("span");
+        cv.className = "cv";
+        cv.textContent = dayConv + (dayConv === 1 ? " conv" : " convs");
+        cell.appendChild(cv);
+      }
+      fr.appendChild(cell);
+    });
+    tfoot.appendChild(fr);
+    t.appendChild(tfoot);
+
+    wrap.appendChild(t);
+    inner.appendChild(wrap);
+  }
+
+  body.addEventListener("click", (e) => {
+    if (suppressClick) return;
+    const cell = e.target.closest("td.pin-3");
+    if (!cell) return;
+    const tr = cell.closest("tr[data-key]");
+    if (tr) toggleDetail(tr);
+  });
+
+  let resizeTimer = null;
+  window.addEventListener("resize", () => {
+    syncDetailWidths();
+    clearTimeout(resizeTimer);
+    // refit only while the user hasn't set their own widths
+    resizeTimer = setTimeout(() => { if (!userResized && colWidths) resetColumns(); }, 180);
+  });
 
   document.getElementById("filter-group").addEventListener("click", (e) => {
     const btn = e.target.closest("button[data-filter]");
@@ -438,6 +910,7 @@
       renderStats();
       renderHead();
       renderBody();
+      fitColumns();
     } catch(err){
       const tag = document.getElementById("source-tag");
       const label = document.getElementById("source-label");
