@@ -69,7 +69,9 @@
 
   *{box-sizing:border-box;}
   body{ margin:0; background:var(--bg); color:var(--text); font-family:"Manrope",system-ui,sans-serif; -webkit-font-smoothing:antialiased; }
-  .wrap{ max-width:1180px; margin:0 auto; padding:28px 20px 56px; display:flex; flex-direction:column; gap:18px; }
+  /* No max-width: the layout runs the full browser width so the results table can show
+     as many columns as fit before it needs to scroll horizontally. */
+  .wrap{ margin:0 auto; padding:28px 20px 56px; display:flex; flex-direction:column; gap:18px; }
 
   header{ display:flex; flex-wrap:wrap; align-items:flex-end; justify-content:space-between; gap:14px; padding-bottom:16px; border-bottom:1px solid var(--border); }
   .title-block h1{ margin:0 0 4px; font-size:28px; font-weight:800; letter-spacing:-0.02em; }
@@ -84,12 +86,10 @@
   .btn:hover{ background:var(--row-hover); }
   .btn.primary{ background:var(--accent); color:var(--accent-ink); border-color:transparent; }
 
-  .stats{ display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; }
+  .stats{ display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,240px)); gap:12px; }
   .stat{ background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:14px 16px; display:flex; flex-direction:column; gap:4px; box-shadow:var(--shadow); }
   .stat .label{ font-size:11.5px; letter-spacing:0.07em; text-transform:uppercase; color:var(--text-muted); font-weight:700; }
   .stat .value{ font-family:"IBM Plex Mono",monospace; font-size:26px; font-weight:600; font-variant-numeric:tabular-nums; }
-  .stat.keep .value{color:var(--good);}
-  .stat.pause .value{color:var(--warn);}
   .stat .sub{font-size:12px;color:var(--text-muted);}
 
   .controls{ display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; }
@@ -151,9 +151,13 @@
 
   /* ---------- thresholds panel ---------- */
   .thresholds-panel{ background:var(--surface); border:1px solid var(--border); border-radius:12px; box-shadow:var(--shadow); padding:18px 20px; display:flex; flex-direction:column; gap:14px; }
+  /* The display:flex above outranks the user-agent's [hidden]{display:none}, which made the
+     panel render open on every load regardless of the toggle. This puts `hidden` back in charge. */
+  .thresholds-panel[hidden]{ display:none; }
   .thresholds-panel h2{ margin:0; font-size:16px; font-weight:800; }
   .thresholds-panel p.help{ margin:0; color:var(--text-muted); font-size:12.5px; }
-  .thresh-table{ width:100%; border-collapse:collapse; font-size:13px; }
+  /* capped so the five columns stay grouped instead of spreading across a full-width page */
+  .thresh-table{ width:100%; max-width:900px; border-collapse:collapse; font-size:13px; }
   .thresh-table th{ text-align:left; font-family:"Manrope",sans-serif; font-weight:700; font-size:11px; letter-spacing:0.05em; text-transform:uppercase; color:var(--text-muted); padding:6px 8px; border-bottom:1px solid var(--border); }
   .thresh-table td{ padding:6px 8px; border-bottom:1px solid var(--border); font-family:"IBM Plex Mono",monospace; }
   .thresh-table tr:last-child td{ border-bottom:none; }
@@ -161,6 +165,9 @@
   .thresh-table input:focus{ outline:2px solid var(--accent); outline-offset:1px; }
   .thresh-save{ font-family:"Manrope",sans-serif; font-weight:700; font-size:12px; padding:5px 12px; border-radius:6px; border:1px solid var(--border); background:var(--accent-soft); color:var(--accent); cursor:pointer; }
   .thresh-save:hover{ filter:brightness(1.05); }
+  .thresh-save[disabled]{ opacity:0.55; cursor:default; filter:none; }
+  .thresh-actions{ display:flex; align-items:center; gap:12px; padding-top:2px; }
+  .thresh-actions .thresh-save{ font-size:12.5px; padding:7px 18px; }
   .thresh-status{ font-size:11.5px; font-weight:600; }
   .thresh-status.ok{ color:var(--good); }
   .thresh-status.err{ color:var(--bad); }
@@ -200,7 +207,7 @@
 
   <div class="thresholds-panel" id="thresholds-panel" hidden>
     <h2>Pause thresholds by product</h2>
-    <p class="help">An eligible adset (age ≥ 5 days) is flagged Pause when EITHER window's cost/result exceeds its threshold AND conversions fall below it. Changes save immediately and apply from the next daily pull.</p>
+    <p class="help">An eligible adset (age ≥ 5 days) is flagged Pause when EITHER window's cost/result exceeds its threshold AND conversions fall below it. Edit any values, then press Save once to write every product's row. Changes apply from the next daily pull.</p>
     <table class="thresh-table">
       <thead>
         <tr>
@@ -209,12 +216,14 @@
           <th>5-day purchases</th>
           <th>10-day cost</th>
           <th>10-day purchases</th>
-          <th></th>
-          <th></th>
         </tr>
       </thead>
       <tbody id="thresh-body"></tbody>
     </table>
+    <div class="thresh-actions">
+      <button class="thresh-save" id="thresh-save-all" type="button">Save</button>
+      <span class="thresh-status" id="thresh-status"></span>
+    </div>
   </div>
 
   <div class="stats">
@@ -222,16 +231,6 @@
       <div class="label">Adsets tracked</div>
       <div class="value" id="stat-total">–</div>
       <div class="sub">across 2 ad accounts</div>
-    </div>
-    <div class="stat keep">
-      <div class="label">Keep</div>
-      <div class="value" id="stat-keep">–</div>
-      <div class="sub">recommended to keep running</div>
-    </div>
-    <div class="stat pause">
-      <div class="label">Pause</div>
-      <div class="value" id="stat-pause">–</div>
-      <div class="sub">recommended to pause</div>
     </div>
   </div>
 
@@ -408,8 +407,6 @@
 
   function renderStats(){
     document.getElementById("stat-total").textContent = ROWS.length;
-    document.getElementById("stat-keep").textContent = ROWS.filter(r => r.advise === "Keep").length;
-    document.getElementById("stat-pause").textContent = ROWS.filter(r => r.advise === "Pause").length;
     document.getElementById("total-count").textContent = ROWS.length;
   }
 
@@ -452,8 +449,17 @@
     }
   }
 
+  const saveAllBtn = document.getElementById("thresh-save-all");
+  const threshStatus = document.getElementById("thresh-status");
+
+  function setThreshStatus(text, kind){
+    threshStatus.textContent = text;
+    threshStatus.className = "thresh-status" + (kind ? " " + kind : "");
+  }
+
   async function loadThresholds(){
     const tbody = document.getElementById("thresh-body");
+    setThreshStatus("");
     try{
       const res = await fetch("/api/thresholds", { cache: "no-store" });
       const data = await res.json();
@@ -461,47 +467,71 @@
       tbody.innerHTML = "";
       (data.thresholds || []).forEach(t => {
         const tr = document.createElement("tr");
+        tr.dataset.product = t.product;
         tr.innerHTML =
-          '<td>' + t.product + '</td>' +
+          '<td class="thresh-product"></td>' +
           '<td><input type="number" step="any" class="f-cost5" value="' + t.cost_5d_threshold + '"></td>' +
           '<td><input type="number" step="any" class="f-purch5" value="' + t.purchase_5d_threshold + '"></td>' +
           '<td><input type="number" step="any" class="f-cost10" value="' + t.cost_10d_threshold + '"></td>' +
-          '<td><input type="number" step="any" class="f-purch10" value="' + t.purchase_10d_threshold + '"></td>' +
-          '<td><button class="thresh-save">Save</button></td>' +
-          '<td><span class="thresh-status"></span></td>';
-        tr.querySelector(".thresh-save").addEventListener("click", async () => {
-          const statusEl = tr.querySelector(".thresh-status");
-          statusEl.textContent = "Saving…";
-          statusEl.className = "thresh-status";
-          const payload = {
-            product: t.product,
+          '<td><input type="number" step="any" class="f-purch10" value="' + t.purchase_10d_threshold + '"></td>';
+        tr.querySelector(".thresh-product").textContent = t.product;
+        tbody.appendChild(tr);
+      });
+      saveAllBtn.disabled = tbody.rows.length === 0;
+    } catch(err){
+      tbody.innerHTML = '<tr><td colspan="5" style="color:var(--bad);">Failed to load thresholds: ' + err.message + '</td></tr>';
+      saveAllBtn.disabled = true;
+    }
+  }
+
+  // One Save for the whole table: every product row is submitted in a single click and the
+  // outcome is reported as one combined status line. The API takes one product per request,
+  // so the rows go out together and their results are collected here.
+  saveAllBtn.addEventListener("click", async () => {
+    const rows = [...document.querySelectorAll("#thresh-body tr[data-product]")];
+    if (rows.length === 0){
+      setThreshStatus("Nothing to save.", "err");
+      return;
+    }
+
+    saveAllBtn.disabled = true;
+    setThreshStatus("Saving…");
+
+    const results = await Promise.all(rows.map(async (tr) => {
+      const product = tr.dataset.product;
+      try{
+        const r = await fetch("/api/thresholds", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            product,
             cost_5d_threshold: tr.querySelector(".f-cost5").value,
             purchase_5d_threshold: tr.querySelector(".f-purch5").value,
             cost_10d_threshold: tr.querySelector(".f-cost10").value,
             purchase_10d_threshold: tr.querySelector(".f-purch10").value,
-          };
-          try{
-            const r = await fetch("/api/thresholds", {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify(payload),
-            });
-            const d = await r.json();
-            if (!r.ok || d.error) throw new Error(d.error || ("HTTP " + r.status));
-            statusEl.textContent = "Saved";
-            statusEl.className = "thresh-status ok";
-            setTimeout(() => { statusEl.textContent = ""; }, 2500);
-          } catch(err){
-            statusEl.textContent = "Failed: " + err.message;
-            statusEl.className = "thresh-status err";
-          }
+          }),
         });
-        tbody.appendChild(tr);
-      });
-    } catch(err){
-      tbody.innerHTML = '<tr><td colspan="7" style="color:var(--bad);">Failed to load thresholds: ' + err.message + '</td></tr>';
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok || d.error) throw new Error(d.error || ("HTTP " + r.status));
+        return { product, ok: true };
+      } catch(err){
+        return { product, ok: false, message: err.message };
+      }
+    }));
+
+    saveAllBtn.disabled = false;
+    const failed = results.filter(x => !x.ok);
+    if (failed.length === 0){
+      setThreshStatus("Saved all " + results.length + " product" + (results.length === 1 ? "" : "s") + ".", "ok");
+      setTimeout(() => { if (threshStatus.classList.contains("ok")) setThreshStatus(""); }, 4000);
+    } else {
+      setThreshStatus(
+        "Saved " + (results.length - failed.length) + " of " + results.length + " · failed: " +
+        failed.map(f => f.product + " (" + f.message + ")").join(", "),
+        "err"
+      );
     }
-  }
+  });
 
   document.getElementById("toggle-thresholds").addEventListener("click", () => {
     const panel = document.getElementById("thresholds-panel");
