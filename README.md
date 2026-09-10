@@ -212,10 +212,20 @@ on screen as possible before anything has to scroll. How that works, in `renderH
 ### 8. Adset drill-down
 
 Clicking an adset name expands a panel under that row listing **every ad in that adset**: ad name
-with its Active/Paused badge, the ad's start date, its 10-day spend and conversions, and then one
-column per day showing that day's spend with its conversions underneath. A totals row closes it out.
+with its Active/Paused badge, the ad's start date, its 10-day spend, conversions and **CPP** (cost
+per purchase — that ad's own spend ÷ its own conversions, shown as `–` when it has none), and then
+one column per day showing that day's spend with its conversions underneath. A totals row closes it
+out, and its CPP should match the adset row's own `cost_10d` to the paisa.
 
 - Data comes from `GET /api/ads`, fetched on first expand and cached per adset for the session.
+- **Day columns are trimmed to when the ads actually existed.** If every ad in the adset was created
+  four days ago, the panel shows four day columns, not ten with six blanks. The cut is the earliest
+  `ad_created_date` across the adset's ads (never earlier than the window start), so a dropped day
+  is always one on which no ad existed and therefore always zero — trimming can never hide spend,
+  and the 10-day totals still reconcile. When it trims, the header says so.
+  In the rare adset whose ads have *different* start dates (1 of 43 at the last check), the columns
+  span all of them and the later ad's pre-creation cells render blank (`.day.pre`) rather than `–`,
+  so "did not exist yet" never reads as "ran and spent nothing".
 - The panel's inner div is `position: sticky; left: 0` and sized to the scroll container, so it
   stays on screen no matter how far right the table is scrolled.
 - Expanded rows survive sorting and filtering — `renderBody` re-opens whatever was open.

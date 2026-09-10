@@ -184,6 +184,9 @@
   .ads-table td.num{ text-align:right; font-variant-numeric:tabular-nums; }
   .ads-table td.day{ text-align:right; font-variant-numeric:tabular-nums; color:var(--text-muted); }
   .ads-table td.day.spent{ color:var(--text); }
+  /* days before this ad was created — it could not have run, so leave the cell blank
+     rather than showing a zero that reads like "ran and spent nothing" */
+  .ads-table td.day.pre{ background:var(--surface-alt); }
   .ads-table td.day .cv{ display:block; font-size:10px; font-weight:700; color:var(--good); }
   .ads-table tfoot td{ font-weight:700; background:var(--surface-alt); border-top:1px solid var(--border); border-bottom:none; }
   .ad-status{ display:inline-block; margin-left:6px; padding:1px 6px; border-radius:99px; font-family:"Manrope",sans-serif; font-size:9.5px; font-weight:700; letter-spacing:0.04em; border:1px solid var(--border); color:var(--text-muted); }
@@ -719,15 +722,33 @@
     const ads = data.ads || [];
     const dates = data.dates || [];
 
+    // Show only the days these ads could actually have run. If every ad in the adset was
+    // created 4 days ago, show 4 day columns instead of 10 with 6 blanks. Anything trimmed
+    // is a day before every ad existed, so it is always zero — this never hides spend, and
+    // the 10-day totals still reconcile with the adset row above.
+    let days = dates;
+    if (dates.length && ads.length){
+      let earliest = dates[dates.length - 1];
+      for (const ad of ads){
+        if (!ad.started){ earliest = dates[0]; break; }   // unknown start: show everything
+        if (ad.started < earliest) earliest = ad.started;
+      }
+      if (earliest < dates[0]) earliest = dates[0];
+      days = dates.filter(d => d >= earliest);
+    }
+    const trimmed = days.length < dates.length;
+
     const head = document.createElement("div");
     head.className = "detail-head";
     const h3 = document.createElement("h3");
     h3.textContent = ads.length + (ads.length === 1 ? " ad in " : " ads in ") + tr.dataset.adset;
     head.appendChild(h3);
-    if (dates.length){
+    if (days.length){
       const meta = document.createElement("span");
       meta.className = "meta";
-      meta.textContent = "day-by-day spend and conversions · " + fmtDay(dates[0]) + " – " + fmtDay(dates[dates.length - 1]);
+      meta.textContent = "day-by-day spend and conversions · " +
+        fmtDay(days[0]) + " – " + fmtDay(days[days.length - 1]) +
+        (trimmed ? " · earlier days omitted — the ads only start " + fmtDay(days[0]) : "");
       head.appendChild(meta);
     }
     inner.appendChild(head);
@@ -743,6 +764,7 @@
     // Meta attributes a few conversions at adset level that it can't pin to one ad, so the
     // per-ad numbers can come up a conversion or two short of the adset row. Say so plainly.
     const convSum = ads.reduce((t, x) => t + (x.conv10 || 0), 0);
+    const spendSum = ads.reduce((t, x) => t + (x.spend10 || 0), 0);
     const rowConv = Number(tr.dataset.conv10);
     if (Number.isFinite(rowConv) && convSum !== rowConv){
       const note = document.createElement("div");
@@ -759,13 +781,20 @@
 
     const thead = document.createElement("thead");
     const hr = document.createElement("tr");
-    [["Ad name", ""], ["Started", ""], ["Spend (10d)", "num"], ["Conv (10d)", "num"]].forEach(([label, cls]) => {
+    [
+      ["Ad name", "", ""],
+      ["Started", "", ""],
+      ["Spend (10d)", "num", ""],
+      ["Conv (10d)", "num", ""],
+      ["CPP (10d)", "num", "Cost per purchase — 10-day spend divided by conversions"],
+    ].forEach(([label, cls, tip]) => {
       const th = document.createElement("th");
       if (cls) th.className = cls;
+      if (tip) th.title = tip;
       th.textContent = label;
       hr.appendChild(th);
     });
-    dates.forEach(d => {
+    days.forEach(d => {
       const th = document.createElement("th");
       th.className = "day";
       th.textContent = fmtDay(d);
@@ -805,9 +834,27 @@
       convTd.textContent = ad.conv10 || 0;
       r.appendChild(convTd);
 
+      // cost per purchase for this ad: its own 10-day spend over its own conversions
+      const cppTd = document.createElement("td");
+      cppTd.className = "num";
+      if (ad.conv10 > 0){
+        cppTd.textContent = fmtCurrency((ad.spend10 || 0) / ad.conv10);
+      } else {
+        cppTd.textContent = "–";
+        cppTd.title = "No conversions in the window, so there is no cost per purchase";
+      }
+      r.appendChild(cppTd);
+
       const byDate = new Map((ad.daily || []).map(d => [d.d, d]));
-      dates.forEach(d => {
+      days.forEach(d => {
         const cell = document.createElement("td");
+        if (ad.started && d < ad.started){
+          // this ad did not exist yet on this day
+          cell.className = "day pre";
+          cell.title = "Created " + fmtDay(ad.started) + " — not running on " + fmtDay(d);
+          r.appendChild(cell);
+          return;
+        }
         const point = byDate.get(d);
         const spend = point ? point.s : 0;
         cell.className = "day" + (spend > 0 ? " spent" : "");
@@ -833,13 +880,17 @@
     fr.appendChild(document.createElement("td"));
     const fspend = document.createElement("td");
     fspend.className = "num";
-    fspend.textContent = fmtCurrency(ads.reduce((t2, x) => t2 + (x.spend10 || 0), 0));
+    fspend.textContent = fmtCurrency(spendSum);
     fr.appendChild(fspend);
     const fconv = document.createElement("td");
     fconv.className = "num";
     fconv.textContent = convSum;
     fr.appendChild(fconv);
-    dates.forEach(d => {
+    const fcpp = document.createElement("td");
+    fcpp.className = "num";
+    fcpp.textContent = convSum > 0 ? fmtCurrency(spendSum / convSum) : "–";
+    fr.appendChild(fcpp);
+    days.forEach(d => {
       const cell = document.createElement("td");
       cell.className = "day";
       const daySpend = ads.reduce((t2, x) => {
