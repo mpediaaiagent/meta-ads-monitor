@@ -1,6 +1,7 @@
-import { adviseForAd, adviseForAdset, classifyProduct, loadAdviseContext } from "../../lib/dashboard/advise.js";
+import { classifyProduct, judgeAdset, loadAdviseContext } from "../../lib/dashboard/advise.js";
 
 // Every adset in today's snapshot. Its Advise is no longer the daily task's threshold rule: it is
+// Pause when its first purchase took longer than the slowest successful ad's, and otherwise
 // rolled up from the adset's own ads — Pause if at least one running ad is Pause, Keep if they
 // are all Keep (see lib/cpp-benchmark/README.md). If the ad-level data can't be loaded, the
 // daily task's stored Advise is returned instead and the response says so.
@@ -73,8 +74,7 @@ export async function onRequestGet(context) {
       return row;
     }
     const dates = ads[0].daily.map((d) => d.d);
-    for (const ad of ads) ad.advise = adviseForAd(ad, dates, ctx, product);
-    const roll = adviseForAdset(ads);
+    const roll = judgeAdset(ads, dates, ctx, product);
     row.advise = roll.verdict;
     row.adviseDetail = { source: "ads", product, ads: ads.length, ...roll };
     return row;

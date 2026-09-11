@@ -14,8 +14,9 @@ Keep/Pause:
 - **Older ads** are compared on their last 10 days' CPP against the product's threshold.
 
 The adset's Advise then follows its ads: **Pause if at least one running ad is Pause, Keep only if
-they all are.** The one number per product that drives all of this (a CPP threshold) is editable
-on the dashboard.
+they all are.** One rule overrides that: **an adset whose first purchase takes more days than the
+slowest successful ad took is Pause, and so is every ad under it** (see section 10). The one number
+per product that drives all of this (a CPP threshold) is editable on the dashboard.
 
 Live at: **https://meta-ads-monitor.pages.dev/**
 
@@ -32,7 +33,7 @@ This is one of several independent tools linked from the hub page at https://met
     - If the ad-level data can't be loaded, it returns the stored daily-task value instead, with `adviseSource: "daily_task_fallback"`, and the page shows a warning.
   - `thresholds.js` — `GET` returns the per-product CPP thresholds from `benchmark_thresholds`, each with how many stored 11+ day ads it lets into the benchmark. `POST` updates **one** product's `max_cpp` (the dashboard's single Save button fans out one request per product — see below).
   - `ads.js` — `GET /api/ads?account=&adset=&campaign=` returns every ad in one adset with its day-by-day spend and conversions, for the adset drill-down.
-    - It also returns each ad's own Keep/Pause (`advise`), the adset verdict they roll up to (`adsetAdvise`), and a `benchmark` summary.
+    - It also returns each ad's Keep/Pause (`advise`), the adset's verdict (`adsetAdvise`, including its `firstPurchase` check), and a `benchmark` summary.
     - All three are computed on every request from raw D1 rows.
     - `campaign` is optional but should always be sent: Meta reuses adset names across campaigns, and the campaign name also decides the product.
 - **`lib/dashboard/advise.js`**: the D1 side of the Keep/Pause, shared by all three functions above so they always agree. It reads the thresholds and the stored successful ads, builds the benchmarks and judges ads.
@@ -244,7 +245,13 @@ only works because the rule also sets `min-width: 0`: the global `table{ min-wid
 
 ### 4. Stats row
 
-Only one stat tile is shown: **Adsets tracked** (`#stat-total`). The former "Keep" and "Pause" count tiles were removed deliberately — those counts remain reachable through the All / Keep / Pause filter buttons and the "N of M adsets shown" counter, so the tiles were redundant. `renderStats()` therefore only writes `#stat-total` and `#total-count`.
+Only one stat tile is shown: **Adsets tracked** (`#stat-total`). The former "Keep" and "Pause" count tiles were removed deliberately. `renderStats()` writes `#stat-total`, `#total-count` and the per-account counts on the filter buttons.
+
+**The filter is by ad account, not by advice.** The buttons are **All / Tuhin Paul / TruBuddy**, each
+with its adset count. The All / Keep / Pause filter was removed on 2026-09-11 at the user's request.
+`getFiltered()` matches a button's `data-filter` against the row's `account` exactly, so a new ad
+account needs its own button, with the name spelled exactly as `adset_snapshots.ad_account` has it.
+Sorting by the Advise column still groups the Pauses together.
 
 ### 5. Thresholds panel — one Save for the whole table
 
@@ -368,7 +375,7 @@ rolled up from the adset's ads in `/api/snapshots`, using the same code the dril
 - **Pause** if at least one **running** ad is Pause.
 - **Keep** if every running ad with a verdict is Keep.
 - **`–`** when the campaign doesn't match a product, there's no ad data for the adset, or no
-  running ad has a verdict. These rows show under "All" only.
+  running ad has a verdict.
 
 An ad counts as running unless Meta says it is paused, deleted or archived. Ads you've already
 switched off don't make the adset read Pause.
@@ -377,6 +384,47 @@ This exists because the two used to disagree: adsets were advised Pause by the a
 every ad inside was on Keep, and the reverse. Hovering the adset's pill lists the ads that made it
 Pause. If the ad-level data can't be loaded, the page shows a warning and falls back to the daily
 task's stored Advise.
+
+**Slow first purchase (added 2026-09-11) overrides the roll-up.** If the adset took more days to
+make its first purchase than the slowest successful ad of its product took, the adset is Pause and
+**every ad under it is Pause too**, whatever their own verdicts.
+- **The limit** (`firstPurchaseDayLimit`) is the latest day on which any successful ad made its
+  first purchase. Day 1 is an ad's first day with spend, and the same successful-ad set and
+  threshold are used as everywhere else. On 2026-09-11 the limits were: TruBuddy and Mpedia 10,
+  educator program 6, Gulu 3, Adi Anku 1. Adi Anku's comes from one ad.
+- **The adset's day 1** is the first day any of its ads spent. Every ad's purchases count,
+  including ads already paused in Meta, because they are part of the adset's history.
+- **When it's Pause:** the adset's first purchase came after the limit day, or it has already run
+  more days than the limit without one. A first purchase exactly on the limit day is in time.
+- **Only checked when every ad in the adset started inside the 10-day window.** For an older adset
+  the first purchase may be older than `ad_snapshots` shows, and guessing would pause good adsets.
+  The hover text says "not checked" for those.
+- **One function decides both.** `judgeAdset` in `lib/dashboard/advise.js` is called by both
+  `/api/snapshots` and `/api/ads`, so the adset row and the drill-down can't disagree.
+- **On the page:** the adset's hover text states the first purchase against the limit.
+- **In the drill-down:**
+  - An amber line under the header states the same thing.
+  - Each ad's pill is labelled `adset`, and its hover text gives the adset reason followed by the
+    ad's own verdict (kept in `advise.own`).
+  - The day grid still shows each ad's own day-by-day verdicts.
+
+### 11. Campaign copy button
+
+Every campaign name in the main table has a copy button right after it (`.copy-btn`). A click copies
+that name and briefly shows a green tick, or a red state if the browser refused.
+- It uses `navigator.clipboard.writeText`, with a hidden-textarea `execCommand("copy")` fallback.
+  The fallback kicks in if `writeText` hasn't settled within 800ms, which happens when a clipboard
+  permission prompt is pending.
+- The name is a `flex: 0 1 auto` span. That keeps the button beside the text instead of at the far
+  edge of the wide Campaign column, and the name still ellipsises when the column is narrow.
+- Clicks are handled in the same delegated `body` click listener as the drill-down toggle, so they
+  never open a row. The click that ends a drag-to-pan is still swallowed.
+
+### 12. Favicon
+
+`public/favicon.svg` is linked from `index.html` with `<link rel="icon">`. It shows a cream play
+triangle (Keep) and amber pause bars (Pause) on the dashboard's green, and `theme-color` is set to
+the same green. It's a plain file, so Pages serves it at `/favicon.svg`.
 
 ## Important operating constraint: a cloud session (probably) cannot push to GitHub itself
 
@@ -398,7 +446,8 @@ If you're running as a local CLI directly on the human's machine, this constrain
 ```
 ads-monitor-project/
 ├── public/
-│   └── index.html          ← entire frontend: HTML, CSS, JS inline
+│   ├── index.html          ← entire frontend: HTML, CSS, JS inline
+│   └── favicon.svg         ← the tab icon
 ├── functions/
 │   └── api/
 │       ├── snapshots.js    ← GET: adset rows, Advise rolled up from their ads
@@ -439,6 +488,9 @@ ads-monitor-project/
 - Replaced the adset-level thresholds with one CPP threshold per product (`benchmark_thresholds`).
   It filters which 11+ day ads count as successful (day-10 CPP) and judges ads past day 9 on their
   last 10 days. The adset Advise is now rolled up from its running ads.
+- Added the slow-first-purchase rule, which puts the adset and all its ads on Pause. The
+  All / Keep / Pause filter was replaced by an ad-account filter. Added the campaign copy buttons
+  and a favicon.
 
 ## Open items
 
@@ -449,7 +501,9 @@ ads-monitor-project/
   its 420 11+ day ads passing. If they still look loose, the 90th percentile is a one-line switch in
   `lib/cpp-benchmark/src/config.js`.
 - **Thin cohorts:** Adi Anku's benchmark is one ad. Gulu's is 9 and educator program's 10. Their
-  verdicts firm up as the monthly refresh adds ads.
+  verdicts firm up as the monthly refresh adds ads. This matters most for the slow-first-purchase
+  rule. Adi Anku's one ad bought on day 1, so any Adi Anku adset without a purchase on its first
+  day is Pause.
 - Watch the first scheduled monthly refresh (2026-10-01). Check its run log and its
   `benchmark_runs` row.
 - **The daily adset task's own Advise is now only a fallback.** Two follow-ups could simplify it,

@@ -1,8 +1,8 @@
-import { adviseForAd, adviseForAdset, benchmarkSummary, classifyProduct, loadAdviseContext } from "../../lib/dashboard/advise.js";
+import { benchmarkSummary, classifyProduct, judgeAdset, loadAdviseContext } from "../../lib/dashboard/advise.js";
 
 // Ad-level drill-down for one adset: every ad in it, with its day-by-day spend and conversions
-// over the same 10-day window the adset row is built from, plus each ad's own Keep/Pause and the
-// adset verdict they roll up to (see lib/cpp-benchmark/README.md).
+// over the same 10-day window the adset row is built from, plus each ad's Keep/Pause and the
+// adset's verdict, decided together by judgeAdset (see lib/cpp-benchmark/README.md).
 export async function onRequestGet(context) {
   const { env, request } = context;
   const url = new URL(request.url);
@@ -65,8 +65,7 @@ export async function onRequestGet(context) {
       for (const ad of ads) ad.advise = null;
     } else {
       benchmark = benchmarkSummary(ctx, product);
-      for (const ad of ads) ad.advise = adviseForAd(ad, dates, ctx, product);
-      adsetAdvise = adviseForAdset(ads);
+      adsetAdvise = judgeAdset(ads, dates, ctx, product);
     }
   } catch (err) {
     benchmark = { available: false, reason: "error", message: String((err && err.message) || err) };

@@ -8,9 +8,11 @@ tested:
 2. **`evaluateAd(daily, benchmark)`** judges an ad day by day through its first 9 days.
 3. **`judgeWindow(totals, benchmark, maxCpp)`** judges an older ad on its last 10 days.
 4. **`rollUpAdset(ads)`** turns an adset's ad verdicts into the adset's Advise.
+5. **`adsetFirstPurchase(ads, benchmark, { through })`** checks how many days the adset took to its
+   first purchase against the slowest successful ad.
 
 `lib/dashboard/advise.js` reads the raw rows from D1 and calls these for `/api/snapshots`,
-`/api/ads` and `/api/thresholds`. The monthly refresh (`scripts/benchmark-refresh/`) uses the same
+`/api/ads` and `/api/thresholds`. Its `judgeAdset` combines 1–5 for one adset. The monthly refresh (`scripts/benchmark-refresh/`) uses the same
 `alignFromFirstSpend` and `isSuccessful` to decide which ads get stored, so "day 1" and "ran 11+
 days" mean exactly the same thing everywhere.
 
@@ -21,7 +23,7 @@ src/
 ├── history.js     raw daily rows → day 1 (first day with spend), day 2, … with running totals
 ├── benchmark.js   successful ads (+ threshold) → per-product CPP line per day + first-purchase limit
 ├── evaluate.js    one ad → Keep/Pause per incubation day (evaluateAd), or on its window (judgeWindow)
-├── adset.js       an adset's ads → the adset's Advise (rollUpAdset)
+├── adset.js       an adset's ads → the adset's Advise (rollUpAdset), and its first-purchase check
 ├── statistics.js  swappable statistics (max, percentile)
 └── constants.js   VERDICT, REASON, STATUS, BASIS, BENCHMARK_KIND, SCHEMA_VERSION
 test/              node:test — `npm test` in this folder (Node 18+, nothing to install)
@@ -46,11 +48,15 @@ It is passed in as `maxCppByProduct`.
 The monthly refresh stores every 11+ day ad whatever its CPP. The threshold is applied when the
 data is read, so changing it takes effect immediately.
 
-**Two benchmarks per product, from those ads:**
+**Three benchmarks per product, from those ads:**
 - **CPP line for each of days 1–9.** This is the highest cumulative CPP any successful ad had on
   that day, plus a flat **10%**. Only ads with a purchase by that day count.
 - **First-purchase limit.** This is the most any successful ad spent up to and including the day
   of its first purchase, with **no margin**. Only the first 9 days count.
+- **First-purchase day limit** (`firstPurchaseDayLimit`). This is the latest day on which any
+  successful ad made its first purchase, reading days 1–10. Every ad under a threshold has one by
+  day 10. With no threshold, an ad might not; then the worst case is unknown and the limit is
+  `null`, rather than set too low.
 
 **Each ad's verdict:**
 
@@ -69,6 +75,16 @@ is certainly past day 9, so it is judged on its window too.
 with a verdict is Keep, and none (`–`) if no running ad has a verdict. Ads already paused, deleted
 or archived in Meta are left out, so an ad you've already switched off doesn't make its adset read
 Pause.
+
+**Slow first purchase overrides that.** `adsetFirstPurchase` adds up all the adset's ads by date,
+paused ones included, and counts day 1 from the first day any of them spent. The adset is Pause
+(`adset_first_purchase_too_slow`) in either case:
+- its first purchase came after the day limit;
+- it has run more days than the limit with no purchase.
+
+Otherwise it is in time (`adset_first_purchase_in_time`). Then the adset **and every ad in it** are
+Pause (`basis: "adset"`). The caller runs the check only when its data covers the adset's whole
+life. The dashboard requires every ad to have started inside the 10-day window.
 
 ## Output
 
@@ -95,15 +111,25 @@ Pause.
   benchmark: { kind: "window_threshold", threshold: 280 } }
 ```
 
+`adsetFirstPurchase` returns:
+
+```js
+{ verdict: "Pause", reason: "adset_first_purchase_too_slow", limit: 3, sampleSize: 9,
+  firstSpendDate: "2026-09-07", ageDays: 4, firstPurchaseDate: "2026-09-11", firstPurchaseDay: 5 }
+```
+
 The API merges the two into one `advise` per ad:
-- `basis: "incubation" | "window"` says which rule the current verdict came from.
+- `basis: "incubation" | "window" | "adset"` says which rule the current verdict came from.
+  `"adset"` means the adset's slow first purchase put it on Pause.
+- `own` holds the ad's own `{ basis, verdict, reason }` when the adset overrode it, and is `null`
+  otherwise.
 - `window` holds the judgeWindow result.
 - `startedBeforeWindow` is set for ads created before the 10-day window.
 
 Every key is always present, and everything is plain JSON. `REASON` values are:
 `cpp_above_benchmark`, `within_cpp_benchmark`, `spend_without_purchase`,
-`within_first_purchase_limit`, `window_cpp_above_threshold`, `within_window_threshold` and
-`no_benchmark`.
+`within_first_purchase_limit`, `window_cpp_above_threshold`, `within_window_threshold`,
+`adset_first_purchase_too_slow`, `adset_first_purchase_in_time` and `no_benchmark`.
 
 ## Tuning
 
@@ -112,7 +138,7 @@ Every number lives in `config.js` and can be overridden per call, e.g.
 The settings and their defaults:
 - `successMinDays` (11), `successCppDay` (10), `incubationMaxDay` (9)
 - `cppMargin` (0.10)
-- `ceilingStatistic` / `firstPurchaseStatistic` (max)
+- `ceilingStatistic` / `firstPurchaseStatistic` / `firstPurchaseDayStatistic` (max)
 - `maxCppByProduct` (none: no filter), `products`
 
 Unknown keys throw.

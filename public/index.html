@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Keep or Pause</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<meta name="theme-color" content="#2F5D50">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
 <style>
@@ -97,6 +99,8 @@
   .segmented button{ appearance:none; border:none; background:transparent; color:var(--text-muted); font-family:"Manrope",sans-serif; font-weight:700; font-size:13px; padding:7px 16px; border-radius:6px; cursor:pointer; transition:background .15s ease, color .15s ease; }
   .segmented button:hover{color:var(--text);}
   .segmented button.active{ background:var(--accent); color:var(--accent-ink); }
+  .segmented button .n{ font-family:"IBM Plex Mono",monospace; font-weight:500; font-size:11.5px; opacity:0.7; margin-left:3px; font-variant-numeric:tabular-nums; }
+  .segmented button .n:empty{ display:none; }
   .segmented button:focus-visible, th button:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
   .result-count{ font-size:13px; color:var(--text-muted); font-variant-numeric:tabular-nums; }
   .result-count strong{color:var(--text);}
@@ -160,6 +164,18 @@
 
   .account-chip{ font-family:"Manrope",sans-serif; font-weight:600; font-size:12.5px; color:var(--text); }
 
+  /* campaign name with its copy button: the name ellipsises, the button always stays in view */
+  .campaign-wrap{ display:flex; align-items:center; gap:6px; min-width:0; }
+  /* shrinks but never grows, so the button sits right after the name rather than at the column's edge */
+  .campaign-wrap .truncate{ flex:0 1 auto; min-width:0; }
+  .copy-btn{ flex:none; appearance:none; display:inline-grid; place-items:center; width:24px; height:24px; padding:0; border:1px solid transparent; border-radius:6px; background:transparent; color:var(--text-muted); cursor:pointer; opacity:0.6; transition:opacity .15s ease, background .15s ease, color .15s ease, border-color .15s ease; }
+  .copy-btn svg{ width:14px; height:14px; display:block; }
+  tbody tr:hover .copy-btn, .copy-btn:focus-visible{ opacity:1; }
+  .copy-btn:hover{ opacity:1; color:var(--accent); background:var(--accent-soft); border-color:var(--border); }
+  .copy-btn:focus-visible{ outline:2px solid var(--accent); outline-offset:1px; }
+  .copy-btn.copied{ opacity:1; color:var(--good); background:var(--good-bg); border-color:var(--good-border); }
+  .copy-btn.failed{ opacity:1; color:var(--bad); background:var(--bad-bg); border-color:var(--bad-border); }
+
   /* ---------- adset drill-down ---------- */
   td.pin-3{ cursor:pointer; }
   .adset-toggle{ display:flex; align-items:center; gap:7px; min-width:0; }
@@ -221,6 +237,8 @@
   .ads-table .pill.off{ opacity:0.5; }
   .adset-advise-line{ font-size:11.5px; color:var(--text-muted); margin:-4px 0 8px; }
   .adset-advise-line strong{ color:var(--text); }
+  .adset-advise-line.slow{ color:var(--warn); background:var(--warn-bg); border:1px solid var(--warn-border); border-radius:6px; padding:5px 9px; margin:-2px 0 10px; }
+  .adset-advise-line.slow strong{ color:var(--warn); }
   td.pin-1 .na{ color:var(--text-muted); font-family:"Manrope",sans-serif; font-weight:700; cursor:help; padding-left:10px; }
   td.pin-1 .pill{ cursor:help; }
   .advise-warning{ font-size:12px; color:var(--warn); background:var(--warn-bg); border:1px solid var(--warn-border); border-radius:8px; padding:8px 12px; }
@@ -290,6 +308,7 @@
       <strong>Benchmark:</strong> an ad that ran 11+ days counts as successful only if its cumulative CPP at day 10 is at or under this. Those ads set the day-by-day lines that ads in their first 9 days are judged against.
       <strong>Older ads:</strong> an ad past day 9 is Pause when its CPP over the last 10 days is above this.
       Each adset's Advise then follows its ads: Pause if any running ad is Pause.
+      <strong>Slow first purchase:</strong> an adset whose first purchase takes more days than the slowest successful ad's is Pause, with every ad under it.
       Press Save once to write every row. Changes apply immediately.
     </p>
     <table class="thresh-table">
@@ -317,10 +336,10 @@
   </div>
 
   <div class="controls">
-    <div class="segmented" id="filter-group" role="group" aria-label="Filter by advice">
-      <button data-filter="all" class="active">All</button>
-      <button data-filter="Keep">Keep</button>
-      <button data-filter="Pause">Pause</button>
+    <div class="segmented" id="filter-group" role="group" aria-label="Filter by ad account">
+      <button data-filter="all" class="active">All <span class="n" data-count="all"></span></button>
+      <button data-filter="Tuhin Paul">Tuhin Paul <span class="n" data-count="Tuhin Paul"></span></button>
+      <button data-filter="TruBuddy">TruBuddy <span class="n" data-count="TruBuddy"></span></button>
     </div>
     <div class="result-count"><strong id="visible-count">–</strong> of <span id="total-count">–</span> adsets shown</div>
   </div>
@@ -587,9 +606,63 @@
     if (colWidths) applyWidths(colWidths);
   }
 
+  // the filter is by ad account: "all", or an account name exactly as the rows carry it
   function getFiltered(){
     if (activeFilter === "all") return ROWS.slice();
-    return ROWS.filter(r => r.advise === activeFilter);
+    return ROWS.filter(r => r.account === activeFilter);
+  }
+
+  /* ---------- copy a campaign name ---------- */
+
+  const COPY_ICON = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.8"/><path d="M10.5 3.2V3.3A1.8 1.8 0 0 0 8.7 1.5H4.3A1.8 1.8 0 0 0 2.5 3.3v4.4a1.8 1.8 0 0 0 1.8 1.8"/></svg>';
+  const COPIED_ICON = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 4.8"/></svg>';
+
+  function copyButton(text){
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "copy-btn";
+    b.dataset.copy = text;
+    b.title = "Copy campaign name";
+    b.setAttribute("aria-label", "Copy campaign name " + text);
+    b.innerHTML = COPY_ICON;
+    return b;
+  }
+
+  async function copyText(text){
+    if (navigator.clipboard && window.isSecureContext){
+      const ok = await Promise.race([
+        navigator.clipboard.writeText(text).then(() => true, () => false),
+        // a pending permission prompt can leave writeText unsettled; don't leave the click unanswered
+        new Promise(r => setTimeout(() => r(false), 800)),
+      ]);
+      if (ok) return true;
+    }
+    // the older route: select a hidden textarea and copy
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try{ ok = document.execCommand("copy"); } catch(_){ ok = false; }
+    ta.remove();
+    return ok;
+  }
+
+  async function onCopy(btn){
+    const ok = await copyText(btn.dataset.copy);
+    btn.classList.remove("copied", "failed");
+    btn.classList.add(ok ? "copied" : "failed");
+    btn.innerHTML = ok ? COPIED_ICON : COPY_ICON;
+    btn.title = ok ? "Copied" : "Couldn't copy — select the name and copy it by hand";
+    clearTimeout(btn._reset);
+    btn._reset = setTimeout(() => {
+      btn.classList.remove("copied", "failed");
+      btn.innerHTML = COPY_ICON;
+      btn.title = "Copy campaign name";
+    }, 1400);
   }
 
   function renderBody(){
@@ -658,8 +731,15 @@
 
       const tdCampaign = document.createElement("td");
       tdCampaign.className = "name-cell";
-      tdCampaign.textContent = r.campaign;
-      tdCampaign.title = r.campaign;
+      const campaignWrap = document.createElement("span");
+      campaignWrap.className = "campaign-wrap";
+      const campaignText = document.createElement("span");
+      campaignText.className = "truncate";
+      campaignText.textContent = r.campaign;
+      campaignText.title = r.campaign;
+      campaignWrap.appendChild(campaignText);
+      campaignWrap.appendChild(copyButton(r.campaign));
+      tdCampaign.appendChild(campaignWrap);
       tr.appendChild(tdCampaign);
 
       const tdCost5 = document.createElement("td");
@@ -703,6 +783,10 @@
   function renderStats(){
     document.getElementById("stat-total").textContent = ROWS.length;
     document.getElementById("total-count").textContent = ROWS.length;
+    document.querySelectorAll("#filter-group [data-count]").forEach(el => {
+      const acct = el.dataset.count;
+      el.textContent = acct === "all" ? ROWS.length : ROWS.filter(r => r.account === acct).length;
+    });
   }
 
   /* ---------- ad-level drill-down ---------- */
@@ -779,7 +863,50 @@
       fmtCurrency(b.ceiling) + ") + " + pct(b.margin);
   }
 
-  function adviseCell(advise, bm, running){
+  // Why the ad got its own verdict, before any adset flag.
+  function ownVerdictText(advise, bm){
+    if (advise.basis === "window") return windowText(advise, bm);
+    const latest = advise.days[advise.days.length - 1];
+    return latest ? verdictText(latest, bm) : advise.verdict;
+  }
+
+  function daysText(n){ return n + (n === 1 ? " day" : " days"); }
+
+  // The adset's first purchase against the slowest successful ad, spelled out. `fp` is the
+  // firstPurchase block the API returns with the adset's Advise.
+  function firstPurchaseText(fp, product){
+    product = product || "this product";
+    if (!fp || !fp.checked){
+      return fp && fp.notChecked === "started_before_window"
+        ? "First-purchase timing not checked: the adset started before the 10-day window, so its first purchase may be older than the data."
+        : "First-purchase timing not checked.";
+    }
+    if (!fp.verdict) return "First-purchase timing: the adset hasn't spent anything yet.";
+    if (fp.reason === "no_benchmark"){
+      return "First-purchase timing: nothing to compare with — no successful " + product + " ads with a known first-purchase day.";
+    }
+    const slow = fp.verdict === "Pause";
+    const since = "first spend on " + fmtDay(fp.firstSpendDate);
+    const slowest = slow
+      ? "longer than the slowest of " + fp.sampleSize + " successful " + product + " ads, which took " + daysText(fp.limit)
+      : "within the " + daysText(fp.limit) + " the slowest of " + fp.sampleSize + " successful " + product + " ads took";
+    if (fp.firstPurchaseDay != null){
+      return "First purchase took " + daysText(fp.firstPurchaseDay) + " (" + fmtDay(fp.firstPurchaseDate) + ", counting from its " + since + ") — " + slowest + ".";
+    }
+    return "No purchase yet after " + daysText(fp.ageDays) + " (" + since + ") — " + (slow ? "already " : "still ") + slowest + ".";
+  }
+
+  // The same, in a few words, for the line under the drill-down header.
+  function firstPurchaseShort(fp){
+    if (!fp || !fp.checked){
+      return fp && fp.notChecked === "started_before_window" ? "first-purchase timing not checked (started before the window)" : "";
+    }
+    if (!fp.verdict || fp.reason === "no_benchmark") return "";
+    return (fp.firstPurchaseDay != null ? "first purchase on day " + fp.firstPurchaseDay : "no purchase yet on day " + fp.ageDays) +
+      " — the slowest successful ad took " + daysText(fp.limit);
+  }
+
+  function adviseCell(advise, bm, running, adsetAdvise){
     const td = document.createElement("td");
     td.className = "advise";
     const na = (title) => {
@@ -798,7 +925,8 @@
       }
       return na("No ad-level Keep/Pause");
     }
-    if (advise.status === "not_started") return na("Hasn't spent anything yet");
+    const byAdset = advise.basis === "adset";
+    if (!byAdset && advise.status === "not_started") return na("Hasn't spent anything yet");
     if (!advise.verdict) return na("No ad-level Keep/Pause");
     const pill = document.createElement("span");
     pill.className = "pill " + (advise.verdict === "Pause" ? "pause" : "keep") + (running ? "" : " off");
@@ -806,17 +934,23 @@
     td.appendChild(pill);
     const age = document.createElement("span");
     age.className = "age";
-    // "d4" = judged on day 4 of incubation; "10d" = past day 9, judged on its last 10 days
-    age.textContent = advise.basis === "window" ? "10d" : "d" + advise.ageDays;
+    // "d4" = judged on day 4 of incubation; "10d" = past day 9, judged on its last 10 days;
+    // "adset" = put on Pause because its adset's first purchase took too long
+    age.textContent = byAdset ? "adset" : advise.basis === "window" ? "10d" : "d" + advise.ageDays;
     td.appendChild(age);
     let title;
-    if (advise.basis === "window"){
-      title = windowText(advise, bm);
+    if (byAdset){
+      const own = advise.own || {};
+      title = "Pause — flagged by its adset: the first purchase took too long\n" +
+        firstPurchaseText(adsetAdvise && adsetAdvise.firstPurchase, bm && bm.product) +
+        "\nEvery ad in this adset is flagged Pause.\n\nOn its own rules: " +
+        (own.verdict
+          ? ownVerdictText({ ...advise, basis: own.basis, verdict: own.verdict, reason: own.reason }, bm)
+          : "no verdict — it hasn't spent anything yet.");
     } else {
-      const latest = advise.days[advise.days.length - 1];
-      title = latest ? verdictText(latest, bm) : advise.verdict;
+      title = ownVerdictText(advise, bm);
     }
-    td.title = title + (running ? "" : "\n\nAlready paused in Meta, so it doesn't count towards the adset's Advise.");
+    td.title = title + (running ? "" : "\n\nAlready paused in Meta" + (byAdset ? "." : ", so it doesn't count towards the adset's Advise."));
     return td;
   }
 
@@ -853,12 +987,19 @@
       return "No verdict: none of its running ads has a Keep/Pause yet";
     }
     const paused = d.ignoredPaused ? "\n(" + d.ignoredPaused + " ad" + (d.ignoredPaused === 1 ? " is" : "s are") + " already paused in Meta and not counted)" : "";
-    if (r.advise === "Keep"){
-      return "Keep — all " + d.counted + " running ad" + (d.counted === 1 ? " is" : "s are") + " on Keep" + paused;
-    }
     const names = d.pauseAds.map(a => "• " + a.name + (a.basis === "window" ? " (last 10 days)" : " (day " + a.ageDays + ")"));
+    const fpLine = "\n\n" + firstPurchaseText(d.firstPurchase, d.product);
+    if (d.basis === "adset"){
+      // the adset's slow first purchase decides, whatever its ads say
+      return "Pause — the adset's first purchase took too long\n" + firstPurchaseText(d.firstPurchase, d.product) +
+        "\nEvery ad under it (" + d.ads + ") is flagged Pause." +
+        (names.length ? "\n\nOn their own rules, " + names.length + " of " + d.counted + " running ads " + (names.length === 1 ? "is" : "are") + " also on Pause:\n" + names.join("\n") : "");
+    }
+    if (r.advise === "Keep"){
+      return "Keep — all " + d.counted + " running ad" + (d.counted === 1 ? " is" : "s are") + " on Keep" + paused + fpLine;
+    }
     return "Pause — " + d.pauseAds.length + " of " + d.counted + " running ads " + (d.pauseAds.length === 1 ? "is" : "are") +
-      " on Pause:\n" + names.join("\n") + paused;
+      " on Pause:\n" + names.join("\n") + paused + fpLine;
   }
 
   // One line under the drill-down header saying what the ad-level Advise column is based on.
@@ -894,6 +1035,11 @@
         (bm.firstPurchaseLimit && bm.firstPurchaseLimit.value !== null
           ? ", or spend with no purchase goes past " + fmtCurrency(bm.firstPurchaseLimit.value)
           : "") + "." + older;
+    }
+    const dayLimit = bm.firstPurchaseDayLimit && bm.firstPurchaseDayLimit.value;
+    if (dayLimit != null){
+      msg += " Whole adset: every ad is Pause when the adset's first purchase takes more than " + daysText(dayLimit) +
+        ", the slowest of its successful ads.";
     }
     text.appendChild(document.createTextNode(msg));
     el.appendChild(text);
@@ -1022,13 +1168,23 @@
       const strong = document.createElement("strong");
       strong.textContent = "Adset: " + a.verdict;
       line.appendChild(strong);
-      line.appendChild(document.createTextNode(
-        a.verdict === "Pause"
-          ? " — " + a.pauseAds.length + " of " + a.counted + " running ads " + (a.pauseAds.length === 1 ? "is" : "are") + " on Pause"
-          : " — all " + a.counted + " running ad" + (a.counted === 1 ? " is" : "s are") + " on Keep"
-      ));
-      if (a.ignoredPaused){
-        line.appendChild(document.createTextNode(" · " + a.ignoredPaused + " already paused in Meta, not counted"));
+      if (a.basis === "adset"){
+        line.classList.add("slow");
+        line.appendChild(document.createTextNode(
+          " — " + firstPurchaseText(a.firstPurchase, data.benchmark && data.benchmark.product) +
+          " Every ad under it is flagged Pause."
+        ));
+      } else {
+        line.appendChild(document.createTextNode(
+          a.verdict === "Pause"
+            ? " — " + a.pauseAds.length + " of " + a.counted + " running ads " + (a.pauseAds.length === 1 ? "is" : "are") + " on Pause"
+            : " — all " + a.counted + " running ad" + (a.counted === 1 ? " is" : "s are") + " on Keep"
+        ));
+        if (a.ignoredPaused){
+          line.appendChild(document.createTextNode(" · " + a.ignoredPaused + " already paused in Meta, not counted"));
+        }
+        const fpShort = firstPurchaseShort(a.firstPurchase);
+        if (fpShort) line.appendChild(document.createTextNode(" · " + fpShort));
       }
       inner.appendChild(line);
     }
@@ -1070,7 +1226,7 @@
     const thead = document.createElement("thead");
     const hr = document.createElement("tr");
     [
-      ["Advise", "", "Ad-level Keep/Pause for ads in their first " + INCUBATION_DAYS + " days. Hover a verdict for the reason."],
+      ["Advise", "", "Each ad's own Keep/Pause, or Pause for every ad when the adset's first purchase took too long. Hover a verdict for the reason."],
       ["Ad name", "", ""],
       ["Started", "", "The day this ad was created"],
       ["Spend", "num", "Total spend over the 10-day window"],
@@ -1096,7 +1252,7 @@
     ads.forEach(ad => {
       const r = document.createElement("tr");
       const advise = ad.advise || null;
-      r.appendChild(adviseCell(advise, data.benchmark, isRunningStatus(ad.status)));
+      r.appendChild(adviseCell(advise, data.benchmark, isRunningStatus(ad.status), data.adsetAdvise));
 
       const nameTd = document.createElement("td");
       nameTd.className = "ad-name";
@@ -1217,6 +1373,11 @@
 
   body.addEventListener("click", (e) => {
     if (suppressClick) return;
+    const copy = e.target.closest(".copy-btn");
+    if (copy){
+      onCopy(copy);
+      return;
+    }
     const cell = e.target.closest("td.pin-3");
     if (!cell) return;
     const tr = cell.closest("tr[data-key]");
