@@ -165,8 +165,9 @@ monthly refresh. Nothing computed is stored. Full column list:
 Products are identified by a keyword match on **campaign name**, not on ad account:
 - `trubuddy`, `mpedia`, `gulu`
 - `educator`, which maps to the product `educator program`
-- `adi-anku`, which maps to `Adi Anku`. It was added to the daily adset task on 2026-09-11. Before
-  that, Adi Anku campaigns were unclassified and always got Keep.
+- `adi-anku`, which maps to `Adi Anku`. The ad level already knows it. **The daily adset task's
+  prompt does not yet**, so until someone adds it there, Adi Anku adsets stay unclassified and
+  always get Keep. See "Open items" for the exact edit.
 
 A campaign matching none or several of these keywords defaults to Advise = "Keep" and is flagged as
 unclassified in the daily task's summary. `lib/cpp-benchmark/src/config.js` holds the same list for
@@ -363,7 +364,6 @@ ads-monitor-project/
   - The `benchmark_*` tables were added and backfilled with 3 months of successful ads.
   - A monthly refresh task was added.
   - The drill-down's Advise column was added.
-  - `adi-anku` was added to the daily adset task's product keywords.
 
 ## Open items
 
@@ -377,3 +377,11 @@ ads-monitor-project/
   firm up as the monthly refresh adds ads.
 - Watch the first scheduled monthly refresh (2026-10-01). Check its run log and its
   `benchmark_runs` row.
+- **Add `adi-anku` to the daily adset task by hand** in the routine editor
+  (https://claude.ai/code/routines/trig_019hg5R68FYS1PgdFckLGZEk). It can't be done through the
+  routines API: an API update replaces the routine's whole session configuration, and this task
+  keeps settings and an enrollment token there that must not be rewritten.
+  - In "Advise" step 1, after `"educator" → product "educator program"`, add:
+    `; "adi-anku" (also match "adi anku" / "adi_anku") → product "Adi Anku"`
+  - In step 2, change `(use "educator program" for the educator keyword)` to
+    `(use "educator program" for the educator keyword and "Adi Anku" for the adi-anku keyword)`.
