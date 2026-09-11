@@ -200,6 +200,24 @@
   .detail-state{ padding:12px 2px; font-size:12.5px; color:var(--text-muted); }
   .detail-state.err{ color:var(--bad); }
 
+  /* ---------- ad-level Keep/Pause (incubation ads, days 1–9) ---------- */
+  .ads-table .pill{ font-size:10.5px; padding:2px 8px 2px 6px; gap:4px; cursor:help; }
+  .ads-table .pill::before{ width:5px; height:5px; }
+  .ads-table td.advise{ overflow:visible; }
+  .ads-table td.advise .na{ color:var(--text-muted); cursor:help; }
+  .ads-table td.advise .age{ margin-left:6px; font-size:10px; color:var(--text-muted); font-variant-numeric:tabular-nums; }
+  /* the day grid shows each incubation day's verdict: a thin green rule for Keep, an amber
+     tint and a heavier rule for Pause, so the day an ad crossed the line is easy to spot */
+  .ads-table td.day.v-keep{ box-shadow:inset 0 -2px 0 var(--good-border); }
+  .ads-table td.day.v-pause{ box-shadow:inset 0 -3px 0 var(--warn); background:var(--warn-bg); color:var(--text); }
+  .ads-table td.day.v-keep, .ads-table td.day.v-pause{ cursor:help; }
+  .advise-legend{ display:flex; flex-wrap:wrap; align-items:center; gap:6px 14px; font-size:11px; color:var(--text-muted); margin:-4px 0 10px; line-height:1.5; }
+  .advise-legend strong{ color:var(--text); font-weight:700; }
+  .advise-legend .sw{ display:inline-block; width:14px; height:9px; border-radius:2px; vertical-align:-1px; margin-right:5px; }
+  .advise-legend .sw.keep{ box-shadow:inset 0 -2px 0 var(--good-border); background:var(--surface); border:1px solid var(--border); }
+  .advise-legend .sw.pause{ box-shadow:inset 0 -3px 0 var(--warn); background:var(--warn-bg); border:1px solid var(--warn-border); }
+  .advise-legend.off{ color:var(--warn); }
+
   footer{ display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px; color:var(--text-muted); font-size:12px; }
 
   /* ---------- thresholds panel ---------- */
@@ -302,7 +320,7 @@
   </div>
 
   <footer>
-    <span>Click an adset name to see its ads · drag the table sideways to pan · drag a column edge to resize</span>
+    <span>Click an adset name to see its ads and their own Keep/Pause · drag the table sideways to pan · drag a column edge to resize</span>
     <span id="footer-refresh">Data refreshes automatically each morning</span>
   </footer>
 
@@ -668,9 +686,9 @@
 
   function rowKey(r){ return r.account + "|" + r.adset + "|" + r.campaign; }
 
-  // ad name, started, spend, conv, cpp — the day columns then share whatever is left,
+  // advise, ad name, started, spend, conv, cpp — the day columns then share whatever is left,
   // all at one identical width, so the day grid reads as an even ladder
-  const ADS_FIXED_W = [220, 74, 92, 58, 82];   // ad name, started, spend, conv, cpp
+  const ADS_FIXED_W = [104, 220, 74, 92, 58, 82];   // advise, ad name, started, spend, conv, cpp
   const ADS_DAY_W = 96;
 
   function layoutAdsTable(inner){
@@ -699,6 +717,125 @@
     widths.forEach((w, i) => { if (cols[i]) cols[i].style.width = w + "px"; });
     t.style.tableLayout = "fixed";
     t.style.width = widths.reduce((a, b) => a + b, 0) + "px";
+  }
+
+  /* ---------- ad-level Keep/Pause ---------- */
+  // Computed server-side by lib/cpp-benchmark (see its README): ads in their first 9 days are
+  // compared with the last 3 months of the same product's ads that ran 11+ days.
+
+  const INCUBATION_DAYS = 9;
+
+  function pct(rate){ return Math.round(rate * 100) + "%"; }
+
+  // One day's verdict, spelled out: which number was compared with which, and where that
+  // benchmark came from — so a Pause can always be checked by hand.
+  function verdictText(v, bm){
+    const product = (bm && bm.product) || "this product";
+    const head = "Day " + v.day + " of " + INCUBATION_DAYS + " · " + v.verdict;
+    const b = v.benchmark || {};
+    if (v.reason === "no_benchmark"){
+      return head + "\nNo benchmark to compare with yet — " +
+        (v.cumPurchases > 0
+          ? "no successful " + product + " ad had a purchase by day " + v.day
+          : "no successful " + product + " ads in the last 3 months") +
+        ". Keep by default.";
+    }
+    if (b.kind === "first_purchase_limit"){
+      const over = v.reason === "spend_without_purchase";
+      return head + "\n" + fmtCurrency(v.cumSpend) + " spent with no purchase yet — " +
+        (over ? "more than" : "within") + " the " + fmtCurrency(b.limit) + " first-purchase limit" +
+        "\n(the most any of " + b.sampleSize + " successful " + product + " ads spent before its first purchase)";
+    }
+    const over = v.reason === "cpp_above_benchmark";
+    return head + "\nCumulative CPP " + fmtCurrency(v.cumCpp) + " (" + fmtCurrency(v.cumSpend) + " ÷ " + v.cumPurchases + ") " +
+      (over ? "is above" : "is within") + " the day-" + v.day + " line of " + fmtCurrency(b.upperBound) +
+      "\n= highest day-" + v.day + " CPP among " + b.sampleSize + " successful " + product + " ads (" +
+      fmtCurrency(b.ceiling) + ") + " + pct(b.margin);
+  }
+
+  function adviseCell(advise, bm){
+    const td = document.createElement("td");
+    td.className = "advise";
+    const na = (title) => {
+      const s = document.createElement("span");
+      s.className = "na";
+      s.textContent = "–";
+      td.title = title;
+      td.appendChild(s);
+      return td;
+    };
+    if (!advise){
+      if (bm && bm.available === false){
+        return na(bm.reason === "unclassified_campaign"
+          ? "No ad-level Keep/Pause: this campaign's name doesn't match a product"
+          : "Ad-level Keep/Pause couldn't be loaded");
+      }
+      return na("No ad-level Keep/Pause");
+    }
+    if (advise.status === "not_started") return na("Hasn't spent anything yet");
+    if (advise.status === "past_incubation"){
+      return na(advise.startedBeforeWindow
+        ? "Started before this 10-day window, so it is past its first " + INCUBATION_DAYS + " days — the adset-level rule applies"
+        : "Day " + advise.ageDays + " — past its first " + INCUBATION_DAYS + " days, so the adset-level rule applies");
+    }
+    const pill = document.createElement("span");
+    pill.className = "pill " + (advise.verdict === "Pause" ? "pause" : "keep");
+    pill.textContent = advise.verdict;
+    td.appendChild(pill);
+    const age = document.createElement("span");
+    age.className = "age";
+    age.textContent = "d" + advise.ageDays;
+    td.appendChild(age);
+    const latest = advise.days[advise.days.length - 1];
+    td.title = latest ? verdictText(latest, bm) : advise.verdict;
+    return td;
+  }
+
+  // One line under the drill-down header saying what the ad-level Advise column is based on.
+  function adviseLegend(bm){
+    const el = document.createElement("div");
+    el.className = "advise-legend";
+    if (!bm) return el;
+    if (!bm.available){
+      el.classList.add("off");
+      el.textContent = bm.reason === "unclassified_campaign"
+        ? "Ad-level Keep/Pause is off here: the campaign name doesn't match a product (trubuddy, mpedia, gulu, educator, adi-anku)."
+        : "Ad-level Keep/Pause couldn't be loaded right now.";
+      return el;
+    }
+    const text = document.createElement("span");
+    const strong = document.createElement("strong");
+    strong.textContent = "Ad Advise";
+    text.appendChild(strong);
+    let msg;
+    if (!bm.cohortSize){
+      msg = " · no " + bm.product + " ads ran " + bm.successMinDays + "+ days in the last 3 months, so there is nothing to compare with yet — incubation ads show Keep.";
+    } else {
+      msg = " · ads in their first " + bm.incubationMaxDay + " days, compared with " + bm.cohortSize + " " + bm.product +
+        " ads that ran " + bm.successMinDays + "+ days" + (bm.windowSince ? " since " + fmtDay(bm.windowSince) : "") +
+        ". Pause when cumulative CPP goes above that day's highest + " + pct(bm.cppMargin) +
+        (bm.firstPurchaseLimit && bm.firstPurchaseLimit.value !== null
+          ? ", or spend with no purchase goes past " + fmtCurrency(bm.firstPurchaseLimit.value)
+          : "") + ".";
+    }
+    text.appendChild(document.createTextNode(msg));
+    el.appendChild(text);
+    const sw = (cls, label) => {
+      const s = document.createElement("span");
+      const box = document.createElement("span");
+      box.className = "sw " + cls;
+      s.appendChild(box);
+      s.appendChild(document.createTextNode(label));
+      return s;
+    };
+    el.appendChild(sw("keep", "Keep day"));
+    el.appendChild(sw("pause", "Pause day"));
+    if (bm.refreshedOn){
+      const r = document.createElement("span");
+      r.textContent = "benchmark refreshed " + fmtDay(bm.refreshedOn);
+      el.appendChild(r);
+    }
+    return el;
   }
 
   function syncDetailWidths(){
@@ -799,6 +936,7 @@
       head.appendChild(meta);
     }
     inner.appendChild(head);
+    inner.appendChild(adviseLegend(data.benchmark));
 
     if (!ads.length){
       const empty = document.createElement("div");
@@ -837,6 +975,7 @@
     const thead = document.createElement("thead");
     const hr = document.createElement("tr");
     [
+      ["Advise", "", "Ad-level Keep/Pause for ads in their first " + INCUBATION_DAYS + " days. Hover a verdict for the reason."],
       ["Ad name", "", ""],
       ["Started", "", "The day this ad was created"],
       ["Spend", "num", "Total spend over the 10-day window"],
@@ -861,6 +1000,8 @@
     const tb = document.createElement("tbody");
     ads.forEach(ad => {
       const r = document.createElement("tr");
+      const advise = ad.advise || null;
+      r.appendChild(adviseCell(advise, data.benchmark));
 
       const nameTd = document.createElement("td");
       nameTd.className = "ad-name";
@@ -900,6 +1041,7 @@
       r.appendChild(cppTd);
 
       const byDate = new Map((ad.daily || []).map(d => [d.d, d]));
+      const verdictByDate = new Map(((advise && advise.days) || []).map(v => [v.date, v]));
       days.forEach(d => {
         const cell = document.createElement("td");
         if (ad.started && d < ad.started){
@@ -919,6 +1061,11 @@
           cv.textContent = point.c + (point.c === 1 ? " conv" : " convs");
           cell.appendChild(cv);
         }
+        const v = verdictByDate.get(d);
+        if (v){
+          cell.classList.add(v.verdict === "Pause" ? "v-pause" : "v-keep");
+          cell.title = verdictText(v, data.benchmark);
+        }
         r.appendChild(cell);
       });
 
@@ -928,6 +1075,7 @@
 
     const tfoot = document.createElement("tfoot");
     const fr = document.createElement("tr");
+    fr.appendChild(document.createElement("td"));
     const flabel = document.createElement("td");
     flabel.textContent = "All ads";
     fr.appendChild(flabel);
