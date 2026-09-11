@@ -14,6 +14,10 @@ scripts do everything else:
 
 The task's prompt is only the wiring. The logic lives here, where it is tested.
 
+**It stores every ad that ran 11+ days, whatever its CPP.** The per-product CPP threshold edited on
+the dashboard (`benchmark_thresholds`, day-10 cumulative CPP) is applied when the data is read. A
+changed threshold therefore takes effect immediately and never needs a re-fetch.
+
 ## Tables (raw data only)
 
 ```

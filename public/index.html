@@ -217,6 +217,16 @@
   .advise-legend .sw.keep{ box-shadow:inset 0 -2px 0 var(--good-border); background:var(--surface); border:1px solid var(--border); }
   .advise-legend .sw.pause{ box-shadow:inset 0 -3px 0 var(--warn); background:var(--warn-bg); border:1px solid var(--warn-border); }
   .advise-legend.off{ color:var(--warn); }
+  /* an ad already paused in Meta keeps its verdict for reference but doesn't count for the adset */
+  .ads-table .pill.off{ opacity:0.5; }
+  .adset-advise-line{ font-size:11.5px; color:var(--text-muted); margin:-4px 0 8px; }
+  .adset-advise-line strong{ color:var(--text); }
+  td.pin-1 .na{ color:var(--text-muted); font-family:"Manrope",sans-serif; font-weight:700; cursor:help; padding-left:10px; }
+  td.pin-1 .pill{ cursor:help; }
+  .advise-warning{ font-size:12px; color:var(--warn); background:var(--warn-bg); border:1px solid var(--warn-border); border-radius:8px; padding:8px 12px; }
+  .advise-warning[hidden]{ display:none; }
+  .thresh-table td.count{ font-family:"Manrope",sans-serif; font-size:12px; color:var(--text-muted); }
+  .thresh-table td.thresh-product{ text-transform:capitalize; font-family:"Manrope",sans-serif; font-weight:700; }
 
   footer{ display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px; color:var(--text-muted); font-size:12px; }
 
@@ -228,7 +238,9 @@
   .thresholds-panel h2{ margin:0; font-size:16px; font-weight:800; }
   .thresholds-panel p.help{ margin:0; color:var(--text-muted); font-size:12.5px; }
   /* capped so the five columns stay grouped instead of spreading across a full-width page */
-  .thresh-table{ width:100%; max-width:900px; border-collapse:collapse; font-size:13px; }
+  /* min-width:0 matters: the global table{min-width:100%} otherwise beats max-width and
+     stretches three short columns across the whole page */
+  .thresh-table{ width:100%; min-width:0; max-width:760px; border-collapse:collapse; font-size:13px; }
   .thresh-table th{ text-align:left; font-family:"Manrope",sans-serif; font-weight:700; font-size:11px; letter-spacing:0.05em; text-transform:uppercase; color:var(--text-muted); padding:6px 8px; border-bottom:1px solid var(--border); }
   .thresh-table td{ padding:6px 8px; border-bottom:1px solid var(--border); font-family:"IBM Plex Mono",monospace; }
   .thresh-table tr:last-child td{ border-bottom:none; }
@@ -263,7 +275,7 @@
     <div class="title-block">
       <p style="margin-bottom:6px;"><a href="https://meta-ads-tools.pages.dev/" style="color:var(--text-muted);text-decoration:none;font-size:12.5px;font-weight:600;">← All tools</a></p>
       <h1>Keep or Pause</h1>
-      <p>Live 5/10-day performance read for every active adset · Tuhin Paul + TruBuddy</p>
+      <p>Keep or Pause for every active adset, decided by its own ads · Tuhin Paul + TruBuddy</p>
     </div>
     <div class="header-actions">
       <span class="source-tag" id="source-tag"><span class="dot"></span> <span id="source-label">Loading…</span></span>
@@ -272,16 +284,20 @@
   </header>
 
   <div class="thresholds-panel" id="thresholds-panel" hidden>
-    <h2>Pause thresholds by product</h2>
-    <p class="help">An eligible adset (age ≥ 5 days) is flagged Pause when EITHER window's cost/result exceeds its threshold AND conversions fall below it. Edit any values, then press Save once to write every product's row. Changes apply from the next daily pull.</p>
+    <h2>CPP threshold by product</h2>
+    <p class="help">
+      One number per product, used two ways.
+      <strong>Benchmark:</strong> an ad that ran 11+ days counts as successful only if its cumulative CPP at day 10 is at or under this. Those ads set the day-by-day lines that ads in their first 9 days are judged against.
+      <strong>Older ads:</strong> an ad past day 9 is Pause when its CPP over the last 10 days is above this.
+      Each adset's Advise then follows its ads: Pause if any running ad is Pause.
+      Press Save once to write every row. Changes apply immediately.
+    </p>
     <table class="thresh-table">
       <thead>
         <tr>
           <th>Product</th>
-          <th>5-day cost</th>
-          <th>5-day purchases</th>
-          <th>10-day cost</th>
-          <th>10-day purchases</th>
+          <th>Max CPP (₹)</th>
+          <th>Successful ads at this threshold</th>
         </tr>
       </thead>
       <tbody id="thresh-body"></tbody>
@@ -308,6 +324,8 @@
     </div>
     <div class="result-count"><strong id="visible-count">–</strong> of <span id="total-count">–</span> adsets shown</div>
   </div>
+
+  <div class="advise-warning" id="advise-warning" hidden></div>
 
   <div class="table-shell">
     <div class="table-scroll">
@@ -581,7 +599,7 @@
       const col = COLUMNS.find(c => c.key === sortKey);
       const isNum = col.type === "number" || col.type === "currency";
       rows.sort((a,b) => {
-        let av = a[sortKey], bv = b[sortKey];
+        let av = a[sortKey] ?? "", bv = b[sortKey] ?? "";
         if (isNum){ return (av - bv) * sortDir; }
         return String(av).localeCompare(String(bv)) * sortDir;
       });
@@ -598,10 +616,18 @@
 
       const tdAdvise = document.createElement("td");
       tdAdvise.className = "pinned pin-1";
-      const pill = document.createElement("span");
-      pill.className = "pill " + (r.advise === "Keep" ? "keep" : "pause");
-      pill.textContent = r.advise;
-      tdAdvise.appendChild(pill);
+      if (r.advise === "Keep" || r.advise === "Pause"){
+        const pill = document.createElement("span");
+        pill.className = "pill " + (r.advise === "Keep" ? "keep" : "pause");
+        pill.textContent = r.advise;
+        tdAdvise.appendChild(pill);
+      } else {
+        const na = document.createElement("span");
+        na.className = "na";
+        na.textContent = "–";
+        tdAdvise.appendChild(na);
+      }
+      tdAdvise.title = adsetAdviseText(r);
       tr.appendChild(tdAdvise);
 
       const tdAccount = document.createElement("td");
@@ -753,7 +779,7 @@
       fmtCurrency(b.ceiling) + ") + " + pct(b.margin);
   }
 
-  function adviseCell(advise, bm){
+  function adviseCell(advise, bm, running){
     const td = document.createElement("td");
     td.className = "advise";
     const na = (title) => {
@@ -773,22 +799,66 @@
       return na("No ad-level Keep/Pause");
     }
     if (advise.status === "not_started") return na("Hasn't spent anything yet");
-    if (advise.status === "past_incubation"){
-      return na(advise.startedBeforeWindow
-        ? "Started before this 10-day window, so it is past its first " + INCUBATION_DAYS + " days — the adset-level rule applies"
-        : "Day " + advise.ageDays + " — past its first " + INCUBATION_DAYS + " days, so the adset-level rule applies");
-    }
+    if (!advise.verdict) return na("No ad-level Keep/Pause");
     const pill = document.createElement("span");
-    pill.className = "pill " + (advise.verdict === "Pause" ? "pause" : "keep");
+    pill.className = "pill " + (advise.verdict === "Pause" ? "pause" : "keep") + (running ? "" : " off");
     pill.textContent = advise.verdict;
     td.appendChild(pill);
     const age = document.createElement("span");
     age.className = "age";
-    age.textContent = "d" + advise.ageDays;
+    // "d4" = judged on day 4 of incubation; "10d" = past day 9, judged on its last 10 days
+    age.textContent = advise.basis === "window" ? "10d" : "d" + advise.ageDays;
     td.appendChild(age);
-    const latest = advise.days[advise.days.length - 1];
-    td.title = latest ? verdictText(latest, bm) : advise.verdict;
+    let title;
+    if (advise.basis === "window"){
+      title = windowText(advise, bm);
+    } else {
+      const latest = advise.days[advise.days.length - 1];
+      title = latest ? verdictText(latest, bm) : advise.verdict;
+    }
+    td.title = title + (running ? "" : "\n\nAlready paused in Meta, so it doesn't count towards the adset's Advise.");
     return td;
+  }
+
+  // Why an ad past day 9 got its verdict: its last 10 days against the product threshold.
+  function windowText(advise, bm){
+    const product = (bm && bm.product) || "this product";
+    const w = advise.window || {};
+    const b = w.benchmark || {};
+    const head = (advise.startedBeforeWindow ? "Started before this 10-day window" : "Day " + advise.ageDays) +
+      " · past its first " + INCUBATION_DAYS + " days, so judged on its last 10 days · " + advise.verdict;
+    if (advise.reason === "no_benchmark"){
+      return head + "\nNo " + (b.kind === "first_purchase_limit" ? "first-purchase limit" : "threshold") +
+        " set for " + product + " yet — Keep by default.";
+    }
+    if (b.kind === "first_purchase_limit"){
+      return head + "\n" + fmtCurrency(w.spend) + " spent in the last 10 days with no purchase — " +
+        (advise.reason === "spend_without_purchase" ? "more than" : "within") +
+        " the " + fmtCurrency(b.limit) + " first-purchase limit";
+    }
+    return head + "\n10-day CPP " + fmtCurrency(w.cpp) + " (" + fmtCurrency(w.spend) + " ÷ " + w.purchases + ") " +
+      (advise.reason === "window_cpp_above_threshold" ? "is above" : "is within") +
+      " the " + product + " threshold of " + fmtCurrency(b.threshold);
+  }
+
+  function isRunningStatus(status){ return !/PAUSED|DELETED|ARCHIVED/i.test(String(status || "")); }
+
+  // The adset row's Advise, spelled out: it follows the adset's running ads.
+  function adsetAdviseText(r){
+    const d = r.adviseDetail;
+    if (!d || d.source !== "ads") return "The daily task's adset rule — ad-level data couldn't be loaded";
+    if (!r.advise){
+      if (d.reason === "unclassified_campaign") return "No verdict: the campaign name doesn't match a product";
+      if (d.reason === "no_ad_data") return "No verdict: no ad-level data for this adset in today's snapshot";
+      return "No verdict: none of its running ads has a Keep/Pause yet";
+    }
+    const paused = d.ignoredPaused ? "\n(" + d.ignoredPaused + " ad" + (d.ignoredPaused === 1 ? " is" : "s are") + " already paused in Meta and not counted)" : "";
+    if (r.advise === "Keep"){
+      return "Keep — all " + d.counted + " running ad" + (d.counted === 1 ? " is" : "s are") + " on Keep" + paused;
+    }
+    const names = d.pauseAds.map(a => "• " + a.name + (a.basis === "window" ? " (last 10 days)" : " (day " + a.ageDays + ")"));
+    return "Pause — " + d.pauseAds.length + " of " + d.counted + " running ads " + (d.pauseAds.length === 1 ? "is" : "are") +
+      " on Pause:\n" + names.join("\n") + paused;
   }
 
   // One line under the drill-down header saying what the ad-level Advise column is based on.
@@ -807,16 +877,23 @@
     const strong = document.createElement("strong");
     strong.textContent = "Ad Advise";
     text.appendChild(strong);
+    const thr = bm.maxCpp != null ? fmtCurrency(bm.maxCpp) : null;
+    const older = thr
+      ? " Past day " + bm.incubationMaxDay + ": Pause when the last 10 days' CPP is above " + thr + "."
+      : " Past day " + bm.incubationMaxDay + ": no threshold set, so Keep.";
     let msg;
     if (!bm.cohortSize){
-      msg = " · no " + bm.product + " ads ran " + bm.successMinDays + "+ days in the last 3 months, so there is nothing to compare with yet — incubation ads show Keep.";
+      msg = " · days 1–" + bm.incubationMaxDay + ": nothing to compare with yet — " + bm.cohortSize + " of " + bm.candidates + " " + bm.product +
+        " ads that ran " + bm.successMinDays + "+ days" + (thr ? " had a day-" + bm.successCppDay + " CPP within " + thr : "") +
+        ", so they show Keep." + older;
     } else {
-      msg = " · ads in their first " + bm.incubationMaxDay + " days, compared with " + bm.cohortSize + " " + bm.product +
+      msg = " · days 1–" + bm.incubationMaxDay + ": compared with " + bm.cohortSize + " of " + bm.candidates + " " + bm.product +
         " ads that ran " + bm.successMinDays + "+ days" + (bm.windowSince ? " since " + fmtDay(bm.windowSince) : "") +
+        (thr ? " with a day-" + bm.successCppDay + " CPP within " + thr : "") +
         ". Pause when cumulative CPP goes above that day's highest + " + pct(bm.cppMargin) +
         (bm.firstPurchaseLimit && bm.firstPurchaseLimit.value !== null
           ? ", or spend with no purchase goes past " + fmtCurrency(bm.firstPurchaseLimit.value)
-          : "") + ".";
+          : "") + "." + older;
     }
     text.appendChild(document.createTextNode(msg));
     el.appendChild(text);
@@ -937,6 +1014,24 @@
     }
     inner.appendChild(head);
     inner.appendChild(adviseLegend(data.benchmark));
+    if (data.adsetAdvise && data.adsetAdvise.verdict){
+      // the same roll-up the adset row's Advise shows, stated where the ads are
+      const line = document.createElement("div");
+      line.className = "adset-advise-line";
+      const a = data.adsetAdvise;
+      const strong = document.createElement("strong");
+      strong.textContent = "Adset: " + a.verdict;
+      line.appendChild(strong);
+      line.appendChild(document.createTextNode(
+        a.verdict === "Pause"
+          ? " — " + a.pauseAds.length + " of " + a.counted + " running ads " + (a.pauseAds.length === 1 ? "is" : "are") + " on Pause"
+          : " — all " + a.counted + " running ad" + (a.counted === 1 ? " is" : "s are") + " on Keep"
+      ));
+      if (a.ignoredPaused){
+        line.appendChild(document.createTextNode(" · " + a.ignoredPaused + " already paused in Meta, not counted"));
+      }
+      inner.appendChild(line);
+    }
 
     if (!ads.length){
       const empty = document.createElement("div");
@@ -1001,7 +1096,7 @@
     ads.forEach(ad => {
       const r = document.createElement("tr");
       const advise = ad.advise || null;
-      r.appendChild(adviseCell(advise, data.benchmark));
+      r.appendChild(adviseCell(advise, data.benchmark, isRunningStatus(ad.status)));
 
       const nameTd = document.createElement("td");
       nameTd.className = "ad-name";
@@ -1150,6 +1245,14 @@
       const data = await res.json();
       if (data.error) throw new Error(data.error);
       ROWS = data.rows || [];
+      const warn = document.getElementById("advise-warning");
+      if (data.adviseSource === "daily_task_fallback"){
+        warn.textContent = "Ad-level Keep/Pause couldn't be loaded" + (data.adviseError ? " (" + data.adviseError + ")" : "") +
+          ", so Advise shows the daily task's older adset rule for now.";
+        warn.hidden = false;
+      } else {
+        warn.hidden = true;
+      }
       const tag = document.getElementById("source-tag");
       const label = document.getElementById("source-label");
       tag.classList.remove("err");
@@ -1195,18 +1298,31 @@
       (data.thresholds || []).forEach(t => {
         const tr = document.createElement("tr");
         tr.dataset.product = t.product;
-        tr.innerHTML =
-          '<td class="thresh-product"></td>' +
-          '<td><input type="number" step="any" class="f-cost5" value="' + t.cost_5d_threshold + '"></td>' +
-          '<td><input type="number" step="any" class="f-purch5" value="' + t.purchase_5d_threshold + '"></td>' +
-          '<td><input type="number" step="any" class="f-cost10" value="' + t.cost_10d_threshold + '"></td>' +
-          '<td><input type="number" step="any" class="f-purch10" value="' + t.purchase_10d_threshold + '"></td>';
-        tr.querySelector(".thresh-product").textContent = t.product;
+        const name = document.createElement("td");
+        name.className = "thresh-product";
+        name.textContent = t.product;
+        tr.appendChild(name);
+        const inputTd = document.createElement("td");
+        const input = document.createElement("input");
+        input.type = "number";
+        input.step = "any";
+        input.min = "0";
+        input.className = "f-maxcpp";
+        input.value = t.max_cpp;
+        inputTd.appendChild(input);
+        tr.appendChild(inputTd);
+        const count = document.createElement("td");
+        count.className = "count";
+        count.textContent = t.successful == null
+          ? "–"
+          : t.successful + " of " + t.candidates + " ads that ran 11+ days";
+        count.title = "Ads from the last 3 months that ran 11+ days and had a cumulative CPP at day 10 at or under the saved threshold. They set the benchmark for ads in their first 9 days.";
+        tr.appendChild(count);
         tbody.appendChild(tr);
       });
       saveAllBtn.disabled = tbody.rows.length === 0;
     } catch(err){
-      tbody.innerHTML = '<tr><td colspan="5" style="color:var(--bad);">Failed to load thresholds: ' + err.message + '</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="3" style="color:var(--bad);">Failed to load thresholds: ' + err.message + '</td></tr>';
       saveAllBtn.disabled = true;
     }
   }
@@ -1230,13 +1346,7 @@
         const r = await fetch("/api/thresholds", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            product,
-            cost_5d_threshold: tr.querySelector(".f-cost5").value,
-            purchase_5d_threshold: tr.querySelector(".f-purch5").value,
-            cost_10d_threshold: tr.querySelector(".f-cost10").value,
-            purchase_10d_threshold: tr.querySelector(".f-purch10").value,
-          }),
+          body: JSON.stringify({ product, max_cpp: tr.querySelector(".f-maxcpp").value }),
         });
         const d = await r.json().catch(() => ({}));
         if (!r.ok || d.error) throw new Error(d.error || ("HTTP " + r.status));
@@ -1248,8 +1358,14 @@
 
     saveAllBtn.disabled = false;
     const failed = results.filter(x => !x.ok);
+    if (failed.length < results.length){
+      // every verdict depends on the thresholds: drop cached drill-downs and re-read the table
+      detailCache.clear();
+      loadSnapshots();
+    }
     if (failed.length === 0){
-      setThreshStatus("Saved all " + results.length + " product" + (results.length === 1 ? "" : "s") + ".", "ok");
+      await loadThresholds();   // refresh the "successful ads" counts for the new numbers
+      setThreshStatus("Saved all " + results.length + " product" + (results.length === 1 ? "" : "s") + " · Advise updated.", "ok");
       setTimeout(() => { if (threshStatus.classList.contains("ok")) setThreshStatus(""); }, 4000);
     } else {
       setThreshStatus(

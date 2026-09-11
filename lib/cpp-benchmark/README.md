@@ -1,105 +1,133 @@
 # cpp-benchmark
 
-The calculation behind the **ad-level Keep/Pause** in the adset drill-down. It's pure code, with
-no I/O:
+The calculation behind every Keep/Pause on the dashboard. It's pure code, with no I/O, and it's
+tested:
 
-1. **`buildBenchmarks(successfulAds)`** turns the last 3 months of successful ads into per-product
-   benchmarks.
-2. **`evaluateAd(daily, benchmark)`** judges one ad, day by day, through its first 9 days.
+1. **`buildBenchmarks(successfulAds, { maxCppByProduct })`** turns the last 3 months of successful
+   ads into per-product benchmarks.
+2. **`evaluateAd(daily, benchmark)`** judges an ad day by day through its first 9 days.
+3. **`judgeWindow(totals, benchmark, maxCpp)`** judges an older ad on its last 10 days.
+4. **`rollUpAdset(ads)`** turns an adset's ad verdicts into the adset's Advise.
 
-`functions/api/ads.js` calls both on every drill-down request, reading raw rows from D1. The
-monthly refresh (`scripts/benchmark-refresh/`) uses the same `alignFromFirstSpend` and
-`isSuccessful` to decide which ads get stored, so "day 1" and "successful" mean exactly the same
-thing on both sides.
+`lib/dashboard/advise.js` reads the raw rows from D1 and calls these for `/api/snapshots`,
+`/api/ads` and `/api/thresholds`. The monthly refresh (`scripts/benchmark-refresh/`) uses the same
+`alignFromFirstSpend` and `isSuccessful` to decide which ads get stored, so "day 1" and "ran 11+
+days" mean exactly the same thing everywhere.
 
 ```
 src/
 ├── index.js       public API and every output enum
 ├── config.js      every tunable number, and the campaign-name → product keywords
 ├── history.js     raw daily rows → day 1 (first day with spend), day 2, … with running totals
-├── benchmark.js   successful ads → per-product CPP benchmark per day + first-purchase limit
-├── evaluate.js    one ad → Keep/Pause per day
+├── benchmark.js   successful ads (+ threshold) → per-product CPP line per day + first-purchase limit
+├── evaluate.js    one ad → Keep/Pause per incubation day (evaluateAd), or on its window (judgeWindow)
+├── adset.js       an adset's ads → the adset's Advise (rollUpAdset)
 ├── statistics.js  swappable statistics (max, percentile)
-└── constants.js   VERDICT, REASON, STATUS, BENCHMARK_KIND, SCHEMA_VERSION
+└── constants.js   VERDICT, REASON, STATUS, BASIS, BENCHMARK_KIND, SCHEMA_VERSION
 test/              node:test — `npm test` in this folder (Node 18+, nothing to install)
 ```
 
 ## The rules
 
-**Which ads count as successful.** An ad counts if it spent on its day 11 or later, where day 1 is
-its first day with spend. No CPP filter is applied: an ad kept running past day 10 was kept for a
-reason. The monthly refresh stores the last 3 months of these ads.
-
 **Product.** Product is read from the campaign name: `trubuddy`, `mpedia`, `gulu`, `educator` (→
 educator program), and `adi-anku` (→ adi anku). A name that matches none or several of these is
-unclassified and never judged. **Products never mix.** Each product's benchmark comes only from
-its own ads, with no fallback to another product.
+unclassified and never judged. **Products never mix.** Each product's numbers come only from its
+own ads, with no fallback to another product.
 
-**Two benchmarks per product:**
-- **CPP benchmark for each of days 1–9.** This is the highest cumulative CPP any successful ad had
-  on that day, plus a flat **10%**. Only ads with at least one purchase by that day count, because
-  CPP doesn't exist before a purchase.
+**The threshold (one number per product).** It is edited on the dashboard and stored in D1's
+`benchmark_thresholds`. The first values were 280 for everything except educator program at 700.
+It is passed in as `maxCppByProduct`.
+
+**Successful ads (the benchmark's sample).** An ad counts when both of these hold:
+- it spent on its day 11 or later (day 1 is its first day with spend);
+- its cumulative CPP **at day 10** is at or under its product's threshold. That also means it
+  needs at least one purchase by day 10.
+
+The monthly refresh stores every 11+ day ad whatever its CPP. The threshold is applied when the
+data is read, so changing it takes effect immediately.
+
+**Two benchmarks per product, from those ads:**
+- **CPP line for each of days 1–9.** This is the highest cumulative CPP any successful ad had on
+  that day, plus a flat **10%**. Only ads with a purchase by that day count.
 - **First-purchase limit.** This is the most any successful ad spent up to and including the day
-  of its first purchase, with **no margin**. Only the first 9 days count: an ad that first bought
-  on day 20 contributes what it had spent by day 9. Ads that never bought in those 9 days still
-  count, with their day-9 spend.
+  of its first purchase, with **no margin**. Only the first 9 days count.
 
-**Keep/Pause, for ads on days 1–9:**
+**Each ad's verdict:**
 
-| the ad on day *d* | Pause when | otherwise |
+| the ad | Pause when | otherwise |
 |---|---|---|
-| no purchase yet | spend > first-purchase limit | Keep |
-| 1+ purchases | cumulative CPP > day-*d* benchmark × 1.10 | Keep |
-| no benchmark to compare with | — | Keep (`no_benchmark`) |
+| day *d* ≤ 9, no purchase yet | spend > first-purchase limit | Keep |
+| day *d* ≤ 9, 1+ purchases | cumulative CPP > day-*d* line × 1.10 | Keep |
+| past day 9, purchases in the last 10 days | 10-day CPP > product threshold | Keep |
+| past day 9, no purchase in the last 10 days | 10-day spend > first-purchase limit | Keep |
+| nothing to compare with | — | Keep (`no_benchmark`) |
 
-A value exactly on the line is not above it, so it gets Keep. The ad's current verdict is its
-latest day's verdict. From day 10 the ad is `past_incubation` and gets no verdict here, because the
-adset-level rule covers it. Its days 1–9 are still returned so the dashboard can show them.
+A value exactly on a line is not above it, so it gets Keep. An ad created before the 10-day window
+is certainly past day 9, so it is judged on its window too.
 
-## Output of `evaluateAd`
+**The adset's Advise:** Pause if **at least one running ad** is Pause, Keep if every running ad
+with a verdict is Keep, and none (`–`) if no running ad has a verdict. Ads already paused, deleted
+or archived in Meta are left out, so an ad you've already switched off doesn't make its adset read
+Pause.
+
+## Output
+
+`evaluateAd` returns:
 
 ```js
 {
   status: "incubation",            // | "past_incubation" | "not_started"
   ageDays: 4, firstSpendDate: "2026-09-07",
-  verdict: "Pause",                // "Keep" | "Pause" | null — the latest day's; null unless incubation
-  reason: "cpp_above_benchmark",   // see REASON
-  days: [                          // days 1..min(age, 9)
-    { day: 1, date: "2026-09-07", cumSpend: 90.22, cumPurchases: 0, cumCpp: null,
-      verdict: "Keep", reason: "within_first_purchase_limit",
-      benchmark: { kind: "first_purchase_limit", limit: 887.18, sampleSize: 420 } },
-    …
+  verdict: "Pause",                // the latest incubation day's; null unless status is incubation
+  reason: "cpp_above_benchmark",
+  days: [                          // days 1..min(age, 9) — also returned for past_incubation ads
     { day: 4, date: "2026-09-10", cumSpend: 1220.8, cumPurchases: 1, cumCpp: 1220.8,
       verdict: "Pause", reason: "cpp_above_benchmark",
-      benchmark: { kind: "cpp", ceiling: 1013.13, margin: 0.1, upperBound: 1114.44, sampleSize: 138 } },
+      benchmark: { kind: "cpp", ceiling: 496.35, margin: 0.1, upperBound: 545.99, sampleSize: 102 } },
   ],
 }
 ```
 
-Every key is always present, and everything is plain JSON. `REASON` values are
+`judgeWindow` returns the verdict for older ads:
+
+```js
+{ spend: 2938.01, purchases: 20, cpp: 146.9, verdict: "Keep", reason: "within_window_threshold",
+  benchmark: { kind: "window_threshold", threshold: 280 } }
+```
+
+The API merges the two into one `advise` per ad:
+- `basis: "incubation" | "window"` says which rule the current verdict came from.
+- `window` holds the judgeWindow result.
+- `startedBeforeWindow` is set for ads created before the 10-day window.
+
+Every key is always present, and everything is plain JSON. `REASON` values are:
 `cpp_above_benchmark`, `within_cpp_benchmark`, `spend_without_purchase`,
-`within_first_purchase_limit` and `no_benchmark`.
+`within_first_purchase_limit`, `window_cpp_above_threshold`, `within_window_threshold` and
+`no_benchmark`.
 
 ## Tuning
 
 Every number lives in `config.js` and can be overridden per call, e.g.
-`buildBenchmarks(ads, { cppMargin: 0.15, ceilingStatistic: STATISTICS.percentile(90) })`. The
-settings are `successMinDays` (11), `incubationMaxDay` (9), `cppMargin` (0.10),
-`ceilingStatistic` / `firstPurchaseStatistic` (max), and `products`. Unknown keys throw.
+`buildBenchmarks(ads, { maxCppByProduct: {...}, ceilingStatistic: STATISTICS.percentile(90) })`.
+The settings and their defaults:
+- `successMinDays` (11), `successCppDay` (10), `incubationMaxDay` (9)
+- `cppMargin` (0.10)
+- `ceilingStatistic` / `firstPurchaseStatistic` (max)
+- `maxCppByProduct` (none: no filter), `products`
 
-### What the highest-value rule gives on the first backfill (2026-09-11)
+Unknown keys throw.
 
-| product | successful ads | first-purchase limit | CPP benchmark, days 1→9 (before +10%) |
+### What the thresholds give (2026-09-11 data, ₹280 / educator ₹700)
+
+| product | successful / ran 11+ days | first-purchase limit | CPP line, days 1→9 (before +10%) |
 |---|---|---|---|
-| trubuddy | 420 | ₹887 | 303 · 524 · 622 · 1013 · 799 · 622 · 467 · 454 · 887 |
-| mpedia | 30 | ₹738 | 132 · 364 · 323 · 369 · 196 · 194 · 233 · 207 · 207 |
-| gulu | 17 | ₹622 | 55 · 483 · 373 · 168 · 142 · 148 · 177 · 173 · 143 |
-| educator program | 10 | ₹884 | 71 · 198 · 249 · 349 · 442 · 305 · 320 · 419 · 507 |
-| adi anku | 1 | ₹211 | 70 · 142 · 143 · 138 · 143 · 165 · 165 · 164 · 190 |
+| trubuddy | 119 / 420 | ₹814 | 303 · 524 · 616 · 496 · 799 · 401 · 467 · 367 · 320 |
+| mpedia | 19 / 30 | ₹738 | 132 · 364 · 323 · 369 · 196 · 194 · 233 · 207 · 207 |
+| gulu | 9 / 17 | ₹622 | 55 · 483 · 373 · 168 · 142 · 148 · 177 · 173 · 143 |
+| educator program | 10 / 10 | ₹884 | 71 · 198 · 249 · 349 · 442 · 305 · 320 · 419 · 507 |
+| adi anku | 1 / 1 | ₹211 | 70 · 142 · 143 · 138 · 143 · 165 · 165 · 164 · 190 |
 
-**Large cohorts make "highest" lenient.** 265 of TruBuddy's 420 successful ads had no purchase in
-their first 9 days, so one slow-starting ad sets the day-4 line (₹1,013). With the 90th percentile
-instead, TruBuddy's lines would be 170 · 308 · 290 · 373 · 312 · 306 · 312 · 324 · 340 and its
-first-purchase limit ₹331. Switching is the one-line override shown above.
-
-**Small cohorts make it fragile.** Adi Anku's benchmark is a single ad. Gulu's day 1 rests on 2.
+Before the filter, TruBuddy used all 420 ads and its day-4 line was ₹1,013. With ₹280 it is ₹496.
+The lines still come from the single highest ad on each day, so one successful ad with a slow day 5
+(₹799) still sets that day. If that proves too loose, `STATISTICS.percentile(90)` is the next lever.
+Adi Anku's benchmark is still one ad.

@@ -4,12 +4,18 @@
 
 ## What this is
 
-A live dashboard showing a Keep/Pause recommendation for every active Meta (Facebook) adset across two ad accounts — **Tuhin Paul** (`807109673203041`) and **TruBuddy** (`949249031427990`) — based on 5-day and 10-day average cost-per-result and conversion (purchase) counts measured against per-product thresholds. The thresholds are editable directly on the dashboard.
+A live dashboard showing a Keep/Pause recommendation for every active Meta (Facebook) adset across two ad accounts: **Tuhin Paul** (`807109673203041`) and **TruBuddy** (`949249031427990`).
 
-Clicking an adset opens its ads, and every ad in its first 9 days gets its **own** Keep/Pause
-there. That verdict comes from comparing its cumulative CPP (or, before its first purchase, its
-spend) with what the same product's successful ads from the last 3 months looked like on the same
-day of their lives.
+**Every verdict starts at the ad.** Clicking an adset opens its ads, and each ad gets its own
+Keep/Pause:
+- **Ads in their first 9 days** are compared, day by day, with the same product's successful ads
+  from the last 3 months. That compares their cumulative CPP or, before a first purchase, their
+  spend.
+- **Older ads** are compared on their last 10 days' CPP against the product's threshold.
+
+The adset's Advise then follows its ads: **Pause if at least one running ad is Pause, Keep only if
+they all are.** The one number per product that drives all of this (a CPP threshold) is editable
+on the dashboard.
 
 Live at: **https://meta-ads-monitor.pages.dev/**
 
@@ -21,10 +27,23 @@ This is one of several independent tools linked from the hub page at https://met
 - **Cloudflare D1** database `meta-ads-report` (database_id `49a148d0-1f38-4ebb-9885-6c5ee40f995e`), bound as `DB` in `wrangler.toml`. This is the *only* backend — no other database, and no external API calls at request time.
 - **Pages Functions** in `functions/api/`:
   - `snapshots.js` — `GET` returns all rows from `adset_snapshots` for `team = 'marketing'`, ordered by account then 10-day cost descending.
-  - `thresholds.js` — `GET` returns all rows from `ad_closing_threshold`; `POST` updates **one** product's four threshold values (the dashboard's single Save button fans out one request per product — see below).
-  - `ads.js` — `GET /api/ads?account=&adset=&campaign=` returns every ad in one adset with its day-by-day spend and conversions, for the adset drill-down. It also returns each ad's **ad-level Keep/Pause** (`advise`) and a `benchmark` summary, computed on every request from the raw rows in `benchmark_ads` / `benchmark_ad_daily` by `lib/cpp-benchmark`. `campaign` is optional but should always be sent: Meta reuses adset names across campaigns, and the campaign name also decides the product.
+    - Each row's `advise` is **rolled up from that adset's ads**; the daily task's stored value is not used.
+    - `adviseDetail` says which running ads are on Pause.
+    - If the ad-level data can't be loaded, it returns the stored daily-task value instead, with `adviseSource: "daily_task_fallback"`, and the page shows a warning.
+  - `thresholds.js` — `GET` returns the per-product CPP thresholds from `benchmark_thresholds`, each with how many stored 11+ day ads it lets into the benchmark. `POST` updates **one** product's `max_cpp` (the dashboard's single Save button fans out one request per product — see below).
+  - `ads.js` — `GET /api/ads?account=&adset=&campaign=` returns every ad in one adset with its day-by-day spend and conversions, for the adset drill-down.
+    - It also returns each ad's own Keep/Pause (`advise`), the adset verdict they roll up to (`adsetAdvise`), and a `benchmark` summary.
+    - All three are computed on every request from raw D1 rows.
+    - `campaign` is optional but should always be sent: Meta reuses adset names across campaigns, and the campaign name also decides the product.
+- **`lib/dashboard/advise.js`**: the D1 side of the Keep/Pause, shared by all three functions above so they always agree. It reads the thresholds and the stored successful ads, builds the benchmarks and judges ads.
 - **Frontend**: `public/index.html`, a single self-contained file (inline CSS + JS, IBM Plex Mono / Manrope from Google Fonts, no build step, no other dependencies).
-- **`lib/cpp-benchmark/`**: the pure calculation behind the ad-level Keep/Pause. It turns the last 3 months of successful ads into per-product benchmarks, then judges ads in their first 9 days against them. `functions/api/ads.js` imports it, which is fine because Pages bundles relative imports. It lives outside `functions/` on purpose, because every file there becomes a live route. Its [README](lib/cpp-benchmark/README.md) has the rules, the output and the tunable settings.
+- **`lib/cpp-benchmark/`**: the pure calculation behind every verdict, with no I/O and tested. It covers:
+  - the benchmarks, built from the last 3 months of successful ads under each product's threshold
+  - the day-by-day verdict for ads in their first 9 days
+  - the 10-day verdict for older ads
+  - the adset roll-up
+
+  The functions import it, which is fine because Pages bundles relative imports. It lives outside `functions/` on purpose, because every file there becomes a live route. Its [README](lib/cpp-benchmark/README.md) has the rules, the output and the tunable settings.
 - **`scripts/benchmark-refresh/`**: the scripts the monthly benchmark task runs (see below). They are never deployed; Pages only serves `public/` and `functions/`.
 
 There is no build step. The only tests are the calculation module's: run `npm test` in `lib/cpp-benchmark/` (built-in `node:test`, nothing to install). The dashboard itself has no test suite. To test the API and page against real data, copy D1 locally and run the real Pages Functions: `npx wrangler d1 export meta-ads-report --remote --output=dump.sql`, then `npx wrangler d1 execute meta-ads-report --local --file=dump.sql`, then `npx wrangler pages dev public`. To verify a frontend change, render the page and interact with it — do not just eyeball the CSS. The quickest loop is to copy `public/index.html` somewhere temporary, stub `window.fetch` with sample `snapshots` / `thresholds` / `ads` responses, and serve that directory over plain HTTP (e.g. `npx http-server`); that exercises layout, sticky columns, column resizing, drag-to-pan, the drill-down, the panel toggle and the save flow without needing D1.
@@ -32,6 +51,11 @@ There is no build step. The only tests are the calculation module's: run `npm te
 ## Data pipeline — how the D1 table actually gets populated
 
 This dashboard does **not** pull from Meta's API directly. A separate scheduled task called **"Daily Meta Ads Report — Direct to D1"** (cron `30 2 * * *`, trigger id `trig_019hg5R68FYS1PgdFckLGZEk` as of this writing) runs once a day, wipes `adset_snapshots` for `team = 'marketing'`, and re-inserts a fresh snapshot for every currently-active adset across both accounts. That task's full prompt lives in the scheduled task itself (use `list_triggers` / `update_trigger` on the Claude Code Remote MCP to read or edit it) — it is long and detailed; read it before assuming you know how a value is computed.
+
+That task still works out its own adset "Advise" (the old 5/10-day threshold rule, reading
+`ad_closing_threshold`) and stores it in `adset_snapshots.advise`. **The dashboard no longer shows
+it.** It is only a fallback for when the ad-level data can't be loaded; see "Adset Advise follows
+its ads" below.
 
 A second, older, parallel task called **"Daily Meta Ads Report"** builds the same data as a Google Sheet instead of writing to D1. It is intentionally left alone and untouched by the D1 task. **That Sheet is the trusted cross-check** — if the dashboard's numbers ever look wrong (missing adsets, wrong counts), compare against that day's Sheet before assuming the dashboard's D1 data is correct.
 
@@ -150,30 +174,49 @@ indexed lookup with no join, and so the daily task writes one row per ad instead
 A row joins to its adset row on `(ad_account, adset_name, campaign_name)` — the same triple
 `adset_snapshots` is unique on.
 
-`ad_closing_threshold` — one row per product, user-editable from the dashboard:
+`benchmark_thresholds` — one row per product, **edited from the dashboard's "Edit Thresholds" panel**:
+
+```
+product (TEXT PK, lower-case: 'trubuddy', 'mpedia', 'gulu', 'educator program', 'adi anku'),
+max_cpp (REAL), updated_at (TEXT)
+```
+
+`max_cpp` is used in two ways, and both read it on every request, so a save applies at once:
+- **Benchmark filter:** an 11+ day ad counts as successful only if its cumulative CPP at day 10 is
+  at or under it.
+- **Older ads:** an ad past day 9 is Pause when its last 10 days' CPP is above it.
+
+Seeded on 2026-09-11 from the old 10-day cost thresholds: 280 for every product except educator
+program at 700.
+
+`ad_closing_threshold` — the old adset-level thresholds (5-day and 10-day cost and purchases per
+product). **The dashboard no longer edits or uses it.** The daily adset task still reads it for the
+fallback Advise it stores.
 
 ```
 product (TEXT), cost_5d_threshold (REAL), purchase_5d_threshold (INTEGER),
 cost_10d_threshold (REAL), purchase_10d_threshold (INTEGER), updated_at (TEXT)
 ```
 
-`benchmark_ads` / `benchmark_ad_daily` / `benchmark_runs` hold the raw data behind the ad-level
-Keep/Pause: one row per successful ad, its days 1–11 of spend and purchases, and one row per
-monthly refresh. Nothing computed is stored. Full column list:
+`benchmark_ads` / `benchmark_ad_daily` / `benchmark_runs` hold the raw data behind the benchmark:
+- every ad that ran 11+ days in the last 3 months, **whatever its CPP** (the threshold is applied
+  when the data is read, so changing it never needs a re-fetch)
+- each ad's days 1–11 of spend and purchases
+- one row per monthly refresh
+
+Nothing computed is stored. Full column list:
 [scripts/benchmark-refresh/README.md](scripts/benchmark-refresh/README.md).
 
 Products are identified by a keyword match on **campaign name**, not on ad account:
 - `trubuddy`, `mpedia`, `gulu`
 - `educator`, which maps to the product `educator program`
-- `adi-anku`, which maps to `Adi Anku`. The ad level already knows it. **The daily adset task's
-  prompt does not yet**, so until someone adds it there, Adi Anku adsets stay unclassified and
-  always get Keep. See "Open items" for the exact edit.
+- `adi-anku` (also `adi anku` / `adi_anku`), which maps to `adi anku`
 
-A campaign matching none or several of these keywords defaults to Advise = "Keep" and is flagged as
-unclassified in the daily task's summary. `lib/cpp-benchmark/src/config.js` holds the same list for
-the ad level.
+`lib/cpp-benchmark/src/config.js` holds that list. A campaign matching none or several of them is
+unclassified: its ads get no verdict and its adset shows `–`.
 
-An adset younger than 5 days is never flagged Pause regardless of its numbers. For eligible adsets (age >= 5), Advise = Pause if EITHER the 5-day window OR the 10-day window has cost-per-result above threshold AND conversions below threshold.
+The daily adset task has its own copy of the list. That copy lacks `adi-anku`, but since its
+Advise is only a fallback now, that no longer affects what the dashboard shows.
 
 ## Frontend behaviour, and the fixes baked into it — don't reintroduce these bugs
 
@@ -195,7 +238,9 @@ If you add, remove or reorder entries in the `COLUMNS` array, you must re-check 
 
 ### 3. Full-width layout
 
-`.wrap` deliberately has **no** `max-width`; the page runs the full browser width so the results table can show as many columns as fit before it needs to scroll horizontally. The pinned-column behaviour above still handles whatever remains off-screen. Two things exist to stop other elements looking stranded on a wide screen: the stats grid uses `repeat(auto-fit, minmax(150px, 240px))` so the single tile doesn't stretch, and `.thresh-table` is capped at `max-width: 900px`. If you reintroduce a page-level `max-width`, you are undoing this on purpose — make sure that's what you mean.
+`.wrap` deliberately has **no** `max-width`; the page runs the full browser width so the results table can show as many columns as fit before it needs to scroll horizontally. The pinned-column behaviour above still handles whatever remains off-screen. Two things exist to stop other elements looking stranded on a wide screen: the stats grid uses `repeat(auto-fit, minmax(150px, 240px))` so the single tile doesn't stretch, and `.thresh-table` is capped at `max-width: 760px`. That cap
+only works because the rule also sets `min-width: 0`: the global `table{ min-width:100% }` beats
+`max-width` otherwise, and the panel's table used to stretch across the whole page. If you reintroduce a page-level `max-width`, you are undoing this on purpose — make sure that's what you mean.
 
 ### 4. Stats row
 
@@ -203,12 +248,19 @@ Only one stat tile is shown: **Adsets tracked** (`#stat-total`). The former "Kee
 
 ### 5. Thresholds panel — one Save for the whole table
 
-The panel lists every product with four numeric inputs, and has a **single Save button at the bottom of the table** (`#thresh-save-all`) rather than one button per row. Clicking it:
+The panel ("CPP threshold by product") lists every product with **one** input, its max CPP from
+`benchmark_thresholds`. Next to it is how many of the stored 11+ day ads that number lets into the
+benchmark, e.g. "119 of 420 ads that ran 11+ days". The adset-level 5/10-day inputs were removed on
+2026-09-11. There is a **single Save button at the bottom of the table** (`#thresh-save-all`)
+rather than one button per row. Clicking it:
 
 - reads the current input values from every `#thresh-body tr[data-product]` row,
 - issues one `POST /api/thresholds` per product concurrently (the API only accepts a single product per request),
 - disables itself and shows "Saving…" while the requests are in flight, then
-- reports **one combined status message** in `#thresh-status`: either `Saved all N products.` (green, auto-clears after 4s) or `Saved X of N · failed: <product> (<reason>), …` (red, and it stays put) naming each product that failed and why.
+- reports **one combined status message** in `#thresh-status`: either `Saved all N products · Advise updated.` (green, auto-clears after 4s) or `Saved X of N · failed: <product> (<reason>), …` (red, and it stays put) naming each product that failed and why.
+- after any successful save it clears the cached drill-downs and reloads the adset table, because
+  every verdict depends on the thresholds. It then reloads the panel so the counts match the new
+  numbers.
 
 Keep the combined-status behaviour if you rework this: a per-row status was the previous design, and it made a partial failure easy to miss.
 
@@ -281,23 +333,24 @@ out, and its CPP should match the adset row's own `cost_10d` to the paisa.
 - The panel's inner div is `position: sticky; left: 0` and sized to the scroll container, so it
   stays on screen no matter how far right the table is scrolled.
 - Expanded rows survive sorting and filtering — `renderBody` re-opens whatever was open.
-- **The first column is the ad's own Keep/Pause** ("Advise"), for ads in their first 9 days only.
-  Adset rows keep their adset-level Advise, so the two never share a column. The ad-level verdict
-  is computed by `/api/ads`:
-  - **With a purchase**, it compares the ad's cumulative CPP with the highest cumulative CPP any
-    successful same-product ad had on that day, plus 10%.
-  - **With no purchase yet**, it compares spend with the most any successful ad spent before its
-    first purchase.
-
-  Rules: [lib/cpp-benchmark/README.md](lib/cpp-benchmark/README.md).
-  - The pill shows the verdict and the ad's day (`d4`). Hovering it spells out the comparison.
-  - Ads past day 9, or created before the 10-day window, show `–`, with a tooltip saying the adset
-    rule applies.
+- **The first column is the ad's own Keep/Pause** ("Advise"), computed by `/api/ads`. Rules:
+  [lib/cpp-benchmark/README.md](lib/cpp-benchmark/README.md).
+  - **Days 1–9** (pill label `d4`): compared day by day with the successful ads of the same
+    product. With a purchase, its cumulative CPP against that day's highest + 10%. Without one,
+    its spend against the most any successful ad spent before its first purchase.
+  - **Past day 9, or created before the 10-day window** (pill label `10d`): its last 10 days' CPP
+    against the product threshold. With no purchase in those days, its spend against the
+    first-purchase limit.
+  - Hovering the pill spells out the comparison.
+  - **Ads already paused in Meta** keep their verdict, shown dimmed, but don't count towards the
+    adset.
   - The day grid marks each incubation day: a thin green rule for Keep, an amber tint for Pause.
     That makes the day an ad crossed the line visible.
-  - A line under the panel header says what the verdicts were measured against and when the
-    benchmark was refreshed.
-  - The threshold panel is untouched. It edits only the adset-level thresholds.
+  - Under the panel header:
+    - One line says what the verdicts were measured against: how many successful ads, at which
+      threshold, and when the benchmark was refreshed.
+    - A second line, "Adset: Pause — 1 of 5 running ads is on Pause", states the roll-up that the
+      adset row shows.
 - **Ad-level conversions can be a conversion or two short of the adset row.** Meta attributes some
   conversions at adset level without assigning them to a specific ad. At the last backfill this
   affected 2 of 43 adsets (each off by one). The panel says so in-line when the numbers disagree
@@ -306,6 +359,24 @@ out, and its CPP should match the adset row's own `cost_10d` to the paisa.
 ### 9. Typo
 
 The button reads "Edit Thresholds", not "Edite Thresholds" — someone already fixed this once.
+
+### 10. Adset Advise follows its ads
+
+Since 2026-09-11 the adset row's Advise is **not** the daily task's 5/10-day threshold rule. It is
+rolled up from the adset's ads in `/api/snapshots`, using the same code the drill-down uses:
+
+- **Pause** if at least one **running** ad is Pause.
+- **Keep** if every running ad with a verdict is Keep.
+- **`–`** when the campaign doesn't match a product, there's no ad data for the adset, or no
+  running ad has a verdict. These rows show under "All" only.
+
+An ad counts as running unless Meta says it is paused, deleted or archived. Ads you've already
+switched off don't make the adset read Pause.
+
+This exists because the two used to disagree: adsets were advised Pause by the adset rule while
+every ad inside was on Keep, and the reverse. Hovering the adset's pill lists the ads that made it
+Pause. If the ad-level data can't be loaded, the page shows a warning and falls back to the daily
+task's stored Advise.
 
 ## Important operating constraint: a cloud session (probably) cannot push to GitHub itself
 
@@ -330,11 +401,12 @@ ads-monitor-project/
 │   └── index.html          ← entire frontend: HTML, CSS, JS inline
 ├── functions/
 │   └── api/
-│       ├── snapshots.js    ← GET: reads adset_snapshots
-│       ├── thresholds.js   ← GET/POST: reads/updates ad_closing_threshold
-│       └── ads.js          ← GET: reads ad_snapshots for one adset (drill-down)
+│       ├── snapshots.js    ← GET: adset rows, Advise rolled up from their ads
+│       ├── thresholds.js   ← GET/POST: per-product CPP thresholds (benchmark_thresholds)
+│       └── ads.js          ← GET: one adset's ads with their own Keep/Pause (drill-down)
 ├── lib/
-│   └── cpp-benchmark/      ← ad-level Keep/Pause calculation (used by functions/api/ads.js)
+│   ├── dashboard/advise.js ← D1 reads + judging, shared by the three functions
+│   └── cpp-benchmark/      ← pure Keep/Pause calculation, tested
 │       ├── src/            ← index.js is the public API; config.js holds every tunable number
 │       ├── test/           ← node:test suite — `npm test` from lib/cpp-benchmark/
 │       └── README.md       ← the rules, the output, the numbers from the first backfill
@@ -364,24 +436,28 @@ ads-monitor-project/
   - The `benchmark_*` tables were added and backfilled with 3 months of successful ads.
   - A monthly refresh task was added.
   - The drill-down's Advise column was added.
+- Replaced the adset-level thresholds with one CPP threshold per product (`benchmark_thresholds`).
+  It filters which 11+ day ads count as successful (day-10 CPP) and judges ads past day 9 on their
+  last 10 days. The adset Advise is now rolled up from its running ads.
 
 ## Open items
 
 - Confirm the D1 binding survived the most recent Git-connected redeploy (Cloudflare dashboard → Settings → Functions).
 - If the daily D1 task's adset count ever looks wrong again, cross-check against that day's Google Sheet report before assuming the dashboard is broken — that Sheet is the ground truth.
-- **The ad-level benchmark uses the highest value**, as agreed, and that is lenient for TruBuddy.
-  265 of its 420 successful ads had no purchase in their first 9 days, so its lines are high (e.g.
-  ₹1,013 on day 4). The 90th percentile is a one-line switch in `lib/cpp-benchmark/src/config.js`;
-  its README shows what it would give.
-- **Thin cohorts:** Adi Anku's benchmark is one ad, and educator program's is 10. Their verdicts
-  firm up as the monthly refresh adds ads.
+- **The benchmark uses the highest value** among the successful ads that pass the threshold.
+  With the ₹280 filter the lines are much tighter than before. On 2026-09-11 TruBuddy had 119 of
+  its 420 11+ day ads passing. If they still look loose, the 90th percentile is a one-line switch in
+  `lib/cpp-benchmark/src/config.js`.
+- **Thin cohorts:** Adi Anku's benchmark is one ad. Gulu's is 9 and educator program's 10. Their
+  verdicts firm up as the monthly refresh adds ads.
 - Watch the first scheduled monthly refresh (2026-10-01). Check its run log and its
   `benchmark_runs` row.
-- **Add `adi-anku` to the daily adset task by hand** in the routine editor
-  (https://claude.ai/code/routines/trig_019hg5R68FYS1PgdFckLGZEk). It can't be done through the
-  routines API: an API update replaces the routine's whole session configuration, and this task
-  keeps settings and an enrollment token there that must not be rewritten.
-  - In "Advise" step 1, after `"educator" → product "educator program"`, add:
-    `; "adi-anku" (also match "adi anku" / "adi_anku") → product "Adi Anku"`
-  - In step 2, change `(use "educator program" for the educator keyword)` to
-    `(use "educator program" for the educator keyword and "Adi Anku" for the adi-anku keyword)`.
+- **The daily adset task's own Advise is now only a fallback.** Two follow-ups could simplify it,
+  but neither is needed for the dashboard to be correct:
+  - Its Advise step, and its product keyword list (which lacks `adi-anku`), could be removed from
+    its prompt.
+  - `ad_closing_threshold` could be retired with it.
+
+  That task's prompt can't be edited through the routines API: an update replaces the routine's
+  whole session configuration, and this task keeps settings and an enrollment token there. Edit it
+  in the routine editor (https://claude.ai/code/routines/trig_019hg5R68FYS1PgdFckLGZEk).
