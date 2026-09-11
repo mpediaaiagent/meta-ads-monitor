@@ -1,0 +1,10 @@
+{
+  "name": "cpp-benchmark",
+  "private": true,
+  "description": "Pure calculation layer: per-product CPP benchmark curves and ad-level daily remarks.",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "test": "node --test \"test/*.test.js\""
+  }
+}

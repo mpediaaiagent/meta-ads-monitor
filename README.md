@@ -19,8 +19,9 @@ This is one of several independent tools linked from the hub page at https://met
   - `thresholds.js` — `GET` returns all rows from `ad_closing_threshold`; `POST` updates **one** product's four threshold values (the dashboard's single Save button fans out one request per product — see below).
   - `ads.js` — `GET /api/ads?account=&adset=&campaign=` returns every ad in one adset with its day-by-day spend and conversions, for the adset drill-down. `campaign` is optional but should always be sent: Meta reuses adset names across campaigns.
 - **Frontend**: `public/index.html`, a single self-contained file (inline CSS + JS, IBM Plex Mono / Manrope from Google Fonts, no build step, no other dependencies).
+- **`lib/cpp-benchmark/`**: a pure calculation module that builds per-product CPP benchmark curves and gives each ad a remark for each day (scale / hold / reduce spend / pause). It does no I/O and **isn't wired into the dashboard or the API yet**. It's blocked on per-ad lifetime history, which doesn't exist yet (see "Open items"). It lives outside `functions/` on purpose, because every file under `functions/` becomes a live route. Its own [README](lib/cpp-benchmark/README.md) has the input/output contract, the rules and the tunable settings.
 
-There is no test suite and no build step. To verify a frontend change, render the page and interact with it — do not just eyeball the CSS. The quickest loop is to copy `public/index.html` somewhere temporary, stub `window.fetch` with sample `snapshots` / `thresholds` / `ads` responses, and serve that directory over plain HTTP (e.g. `npx http-server`); that exercises layout, sticky columns, column resizing, drag-to-pan, the drill-down, the panel toggle and the save flow without needing D1.
+There is no build step. The only tests are the calculation module's: run `npm test` in `lib/cpp-benchmark/` (built-in `node:test`, nothing to install). The dashboard itself has no test suite. To verify a frontend change, render the page and interact with it — do not just eyeball the CSS. The quickest loop is to copy `public/index.html` somewhere temporary, stub `window.fetch` with sample `snapshots` / `thresholds` / `ads` responses, and serve that directory over plain HTTP (e.g. `npx http-server`); that exercises layout, sticky columns, column resizing, drag-to-pan, the drill-down, the panel toggle and the save flow without needing D1.
 
 ## Data pipeline — how the D1 table actually gets populated
 
@@ -275,6 +276,11 @@ ads-monitor-project/
 │       ├── snapshots.js    ← GET: reads adset_snapshots
 │       ├── thresholds.js   ← GET/POST: reads/updates ad_closing_threshold
 │       └── ads.js          ← GET: reads ad_snapshots for one adset (drill-down)
+├── lib/
+│   └── cpp-benchmark/      ← pure CPP benchmark-curve + remark calculation (not wired in yet)
+│       ├── src/            ← index.js is the public API; config.js holds every tunable number
+│       ├── test/           ← node:test suite — `npm test` from lib/cpp-benchmark/
+│       └── README.md       ← input/output contract, rules, open decisions
 ├── wrangler.toml           ← name, pages_build_output_dir, D1 binding
 └── README.md               ← this file
 ```
@@ -294,8 +300,11 @@ ads-monitor-project/
 - Added content-sized, resizable columns and drag-to-pan, and the ad-level adset drill-down
   (`ad_snapshots` + `/api/ads`), backfilled once from the Meta API for 2026-09-10, then put on a
   daily footing with its own scheduled task at 03:30 UTC.
+- Added `lib/cpp-benchmark/`: per-product CPP benchmark curves and daily ad-level remarks, as a
+  standalone tested module with no pipeline or UI yet.
 
 ## Open items
 
 - Confirm the D1 binding survived the most recent Git-connected redeploy (Cloudflare dashboard → Settings → Functions).
 - If the daily D1 task's adset count ever looks wrong again, cross-check against that day's Google Sheet report before assuming the dashboard is broken — that Sheet is the ground truth.
+- **`lib/cpp-benchmark/` has no data to run on yet.** It needs every ad's day-by-day history from its first day, with a product assigned. `ad_snapshots` only keeps the trailing 10 days and is wiped daily, and nothing stores a product per ad. Product is guessed from campaign-name keywords, and that keyword list has no entry for Adi Anku. Keeping that history is its own task and has to come before any dashboard work on remarks. Also still open: what an ad older than 10 days should show (the module currently marks those days `beyond_benchmark_window`), and the real early-margin numbers. Both are listed in the module's README.
