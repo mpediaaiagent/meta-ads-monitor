@@ -991,8 +991,9 @@
   function isRunningStatus(status){ return !/PAUSED|DELETED|ARCHIVED/i.test(String(status || "")); }
 
   // Did an adset-level rule decide this adset's Pause, rather than the roll-up of its ads?
-  // "adset" is the slow first purchase, "adset_cpp" the adset's own CPP (see lib/cpp-benchmark).
-  function isAdsetBasis(basis){ return basis === "adset" || basis === "adset_cpp"; }
+  // "adset" is the slow first purchase, "adset_cpp" the adset's own CPP, "adset_spend" its spend
+  // before any first purchase (see lib/cpp-benchmark).
+  function isAdsetBasis(basis){ return basis === "adset" || basis === "adset_cpp" || basis === "adset_spend"; }
 
   // The adset row's Advise, spelled out: it follows the adset's running ads.
   function adsetAdviseText(r){
@@ -1007,6 +1008,7 @@
     const names = d.pauseAds.map(a => "• " + a.name + (a.basis === "window" ? " (last 10 days)" : " (day " + a.ageDays + ")"));
     const fpLine = "\n\n" + firstPurchaseText(d.firstPurchase, d.product);
     const cppLine = adsetCppText(d.adsetCpp, d.product);
+    const spendLine = adsetSpendText(d.adsetSpend, d.product);
     if (d.basis === "adset"){
       // the adset's slow first purchase decides, whatever its ads say
       return "Pause — the adset's first purchase took too long\n" + firstPurchaseText(d.firstPurchase, d.product) +
@@ -1023,12 +1025,36 @@
           : "all " + d.counted + " running ad" + (d.counted === 1 ? " is" : "s are") + " on Keep, so this flag is the adset's alone.") +
         paused + fpLine;
     }
-    const cppTail = cppLine ? "\n\n" + cppLine : "";
+    if (d.basis === "adset_spend"){
+      // no purchase at all yet, and it has outspent every adset that did go on to convert
+      return "Pause — the adset has spent more than past adsets did before their first purchase\n" + spendLine +
+        "\n\nIts ads keep their own verdicts: " +
+        (names.length
+          ? names.length + " of " + d.counted + " running ads " + (names.length === 1 ? "is" : "are") + " on Pause:\n" + names.join("\n")
+          : "all " + d.counted + " running ad" + (d.counted === 1 ? " is" : "s are") + " on Keep, so this flag is the adset's alone.") +
+        paused + fpLine;
+    }
+    // only one of the two can apply: the CPP rule needs a purchase, the spend rule needs there to be none
+    const tail = (cppLine ? "\n\n" + cppLine : "") + (spendLine ? "\n\n" + spendLine : "");
     if (r.advise === "Keep"){
-      return "Keep — all " + d.counted + " running ad" + (d.counted === 1 ? " is" : "s are") + " on Keep" + paused + fpLine + cppTail;
+      return "Keep — all " + d.counted + " running ad" + (d.counted === 1 ? " is" : "s are") + " on Keep" + paused + fpLine + tail;
     }
     return "Pause — " + d.pauseAds.length + " of " + d.counted + " running ads " + (d.pauseAds.length === 1 ? "is" : "are") +
-      " on Pause:\n" + names.join("\n") + paused + fpLine + cppTail;
+      " on Pause:\n" + names.join("\n") + paused + fpLine + tail;
+  }
+
+  // The adset spend-before-first-purchase rule, spelled out for the hover. Empty when it didn't
+  // apply — including the common case of an adset that has already converted.
+  function adsetSpendText(s, product){
+    if (!s || !s.checked){
+      if (s && s.notChecked === "started_before_window") return "";  // the CPP line already says this
+      return "";
+    }
+    const head = "Adset spend with no purchase yet, by day " + s.day + ": " + fmtCurrency(s.cumSpend);
+    const line = " vs " + fmtCurrency(s.limit) + " — the most any of " + s.sampleSize + " past " +
+      (product || "") + " adset" + (s.sampleSize === 1 ? "" : "s") + " spent before its first purchase (" +
+      fmtCurrency(s.ceiling) + ") + " + pct(s.margin);
+    return head + line + (s.verdict === "Pause" ? " · above it" : " · within it");
   }
 
   // The adset-CPP rule, spelled out for the hover. Empty string when it didn't apply, so callers

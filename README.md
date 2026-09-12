@@ -14,12 +14,13 @@ Keep/Pause:
 - **Older ads** are compared on their last 10 days' CPP against the product's threshold.
 
 The adset's Advise then follows its ads: **Pause if at least one running ad is Pause, Keep only if
-they all are.** Two adset-level rules are OR'd on top of that (see section 10): **an adset whose
+they all are.** Three adset-level rules are OR'd on top of that (see section 10): **an adset whose
 first purchase takes more days than the slowest successful ad took is Pause, and so is every ad
-under it**, and **an adset whose own cumulative CPP is above what past adsets of that product had on
-the same day is Pause**, this one without touching its ads' verdicts. The two numbers per product
-that drive all of this (a CPP threshold and an optional spend-with-no-purchase threshold) are
-editable on the dashboard.
+under it**; **an adset whose own cumulative CPP is above what past adsets of that product had on the
+same day is Pause**; and **an adset that has spent more before its first purchase than past adsets
+did is Pause**. The last two don't touch their ads' verdicts, and all three make the adset's pill
+red. The two numbers per product that drive all of this (a CPP threshold and an optional
+spend-with-no-purchase threshold) are editable on the dashboard.
 
 Live at: **https://meta-ads-monitor.pages.dev/**
 
@@ -404,12 +405,16 @@ The button reads "Edit Thresholds", not "Edite Thresholds" — someone already f
 ### 10. Adset Advise follows its ads
 
 Since 2026-09-11 the adset row's Advise is **not** the daily task's 5/10-day threshold rule. It is
-decided in `/api/snapshots` by the same code the drill-down uses, and there are now **three rules
+decided in `/api/snapshots` by the same code the drill-down uses, and there are now **four rules
 OR'd together** — the adset is Pause if *any* of them says so:
 
 1. the roll-up from its ads (below),
 2. slow first purchase (added 2026-09-11),
-3. adset CPP above the adset benchmark (added 2026-09-12).
+3. adset CPP above the adset benchmark (added 2026-09-12),
+4. adset spend before its first purchase above the adset benchmark (added 2026-09-12).
+
+3 and 4 are mutually exclusive by construction: 3 needs the adset to have converted, 4 needs it not
+to have. 2, 3 and 4 all make the adset's pill **red** (see below).
 
 The roll-up itself:
 
@@ -419,7 +424,7 @@ The roll-up itself:
   running ad has a verdict.
 
 **Two colours of Pause on the adset row** (added 2026-09-12). A Pause decided by an adset-level rule
-— rules 2 and 3, i.e. `basis` is `adset` or `adset_cpp` — is **red** (`.pill.pause.by-adset`, the
+— rules 2, 3 and 4, i.e. `basis` is `adset`, `adset_cpp` or `adset_spend` — is **red** (`.pill.pause.by-adset`, the
 `--bad` palette). A Pause that is just the roll-up of its ads stays **amber** (`--warn`). The point
 is to tell at a glance which adsets are being flagged as a whole rather than for containing a bad
 ad. `isAdsetBasis()` in `public/index.html` is the single check; extend it if another adset-level
@@ -485,6 +490,31 @@ individually-acceptable ads and still cost more per purchase than any adset that
   property. Of the 27 live adsets eligible that day, **13 were flagged** by this rule. If that hit
   rate looks too high, the dials are `ceilingStatistic` (try a percentile) and `cppMargin`, both in
   `lib/cpp-benchmark/src/config.js` — don't special-case it in the dashboard.
+
+**Adset spend before its first purchase (added 2026-09-12).** The same question as the CPP rule, for
+an adset that hasn't converted at all so there is no CPP to ask it with. The adset's total spend so
+far is compared with what past adsets of the product spent before *their* first purchase; above that
+and the adset is Pause.
+
+- **The limit** is `firstPurchaseSpendLimit` on the adset benchmark: the most any cohort adset spent
+  before converting (`spendBeforeFirstPurchase` over days 1–9), **plus `cppMargin` (10%)**. Note the
+  ad-level `firstPurchaseLimit` deliberately has **no** margin; this one does, because an adset pools
+  several ads and its pre-purchase spend is lumpier than any single ad's.
+- **Only while the adset has no purchase at all.** Once it converts, its CPP is the fair question and
+  the CPP rule asks it. Judging a converted adset on its pre-purchase spend would leave it on Pause
+  forever however good its CPP became — the same reason the ad-level rule stands down after the
+  first purchase.
+- **Only days 1–9.** An adset older than that with still no purchase is already caught by the
+  first-purchase *day* limit (rule 2). Same window guard as rules 2 and 3.
+- **In practice rule 2 often fires first** for an adset with no purchases, so `basis` is `adset`
+  rather than `adset_spend` — both are red, so the row looks the same either way. `adset_spend` is
+  the reported basis when the day limit is generous relative to the spend, which is the gap this
+  rule exists to cover.
+- **Calibration on 2026-09-12:** the Pause lines were trubuddy ₹1,070.34 (from 56 adsets, ceiling
+  ₹973.04), educator program ₹972.50, gulu ₹843.35, mpedia ₹783.63. Adi Anku had no cohort. **No
+  live adset tripped it that day** — the three with zero conversions were all around ₹700, under the
+  line. It is a backstop for an adset burning past ~₹1,000 with nothing to show, not a rule that
+  fires often.
 
 ### 11. Campaign copy button
 
