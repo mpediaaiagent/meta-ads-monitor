@@ -36,7 +36,7 @@ This is one of several independent tools linked from the hub page at https://met
     - `adviseDetail` says which running ads are on Pause.
     - If the ad-level data can't be loaded, it returns the stored daily-task value instead, with `adviseSource: "daily_task_fallback"`, and the page shows a warning.
   - `thresholds.js` — `GET` returns the per-product thresholds from `benchmark_thresholds` (`max_cpp` and the optional `max_spend_no_purchase`), each with how many stored 11+ day ads it lets into the benchmark and the derived spend-with-no-purchase limit that an empty field falls back to. `POST` updates **one** product's row (the dashboard's single Save button fans out one request per product — see below); a blank `max_spend_no_purchase` clears it to NULL, anything non-blank must be a number above 0.
-  - `ads.js` — `GET /api/ads?account=&adset=&campaign=` returns every ad in one adset with its day-by-day spend and conversions, for the adset drill-down.
+  - `ads.js` — `GET /api/ads?account=&adset=&campaign=` returns every ad in one adset with its day-by-day spend and conversions, for the adset drill-down. LEFT JOINs `ad_thumbs`, so each ad also carries a `thumb` link (null when the thumbnail task hasn't reached it).
     - It also returns each ad's Keep/Pause (`advise`), the adset's verdict (`adsetAdvise`, including its `firstPurchase` check), and a `benchmark` summary.
     - All three are computed on every request from raw D1 rows.
     - `campaign` is optional but should always be sent: Meta reuses adset names across campaigns, and the campaign name also decides the product.
@@ -117,6 +117,24 @@ encodes — read it before editing the prompt, because most of it is hard-won:
    every adset that ended with zero ads and every batch that errored — silence is exactly how the
    adset undercount bug below hid itself.
 
+### Refreshing the thumbnails — NOT SCHEDULED YET
+
+`ad_thumbs` is populated by hand as of 2026-09-12. For the column to stay useful it needs a daily
+pass, because Meta's links expire and new ads appear every day. Two options, neither built:
+
+1. **Fold it into the 03:30 ad-level task.** It already enumerates every ad, so it would only add
+   the `creative_id` field to a call it is already making, plus one `ads_get_creatives` batch.
+   Cheapest in API calls. **But** that task is the fragile one and it aborts rather than write bad
+   data — so the thumbnail work must be wrapped so that any failure is swallowed and can never
+   block the snapshot write. Thumbnails are cosmetic; spend and conversions are not.
+2. **A separate routine.** Slower (it re-enumerates the ads) but it can fail freely without costing
+   a day of numbers. Safer, and the recommended one.
+
+Either way the shape is: read `SELECT DISTINCT ad_id FROM ad_snapshots`, look up `creative_id` at
+`level=ad` with `object_ids` in batches, fetch those creatives' `thumbnail_url`, and UPSERT into
+`ad_thumbs` with `ON CONFLICT(ad_id) DO UPDATE`. Re-fetch everything each run rather than only new
+ads — the point is refreshing expiring links, not just covering new ads.
+
 ### The third scheduled task: monthly benchmark refresh
 
 **"Meta Ads — monthly benchmark refresh (benchmark_ads)"** runs at 04:30 UTC on the 1st of every
@@ -178,6 +196,29 @@ indexed lookup with no join, and so the daily task writes one row per ad instead
 
 A row joins to its adset row on `(ad_account, adset_name, campaign_name)` — the same triple
 `adset_snapshots` is unique on.
+
+`ad_thumbs` — the ad's creative thumbnail, shown as a column in the drill-down. Added 2026-09-12.
+**Not** wiped daily, unlike the snapshot tables:
+
+```
+ad_id (TEXT PK), creative_id (TEXT), thumb_url (TEXT), image_url (TEXT),
+object_type (TEXT, VIDEO/SHARE/...), fetched_at (TEXT)
+```
+
+- **Where the link comes from.** Two Meta calls: `ads_get_ad_entities` at `level=ad` gives each ad's
+  `creative_id` (that is the only creative field available at ad level), then `ads_get_creatives`
+  with those ids and `fields=[id, thumbnail_url, object_type]` gives the link.
+- **`thumbnail_url` is capped at 64×64** — the `p64x64` in its `stp` parameter. That is why the
+  table shows it at 36px and the hover zoom stops at 1.75x: any more and it just goes soft. For
+  image creatives `image_url` is full size; video creatives have none, so the column uses
+  `thumbnail_url` for everything and stays consistent.
+- **The links expire.** Every URL carries an `oe=` expiry, so a thumbnail that worked yesterday can
+  404 tomorrow. The UI treats that as normal: an `error` handler swaps the image for the same
+  neutral placeholder an unfetched ad gets, and the hover says the link expired. **It never shows a
+  broken-image icon.** This is the one thing to understand before "fixing" a missing thumbnail.
+- **Nothing refreshes it yet.** `/api/ads` LEFT JOINs it so a missing or stale row costs the
+  drill-down nothing, but keeping it current needs a daily step — see "Refreshing the thumbnails".
+- **Seeded by hand on 2026-09-12** with 9 TruBuddy ads, to prove the path end to end.
 
 `benchmark_thresholds` — one row per product, **edited from the dashboard's "Edit Thresholds" panel**:
 

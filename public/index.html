@@ -222,6 +222,15 @@
   .ads-table tbody tr:last-child td{ border-bottom:none; }
   .ads-table tbody tr:hover{ background:var(--row-hover); }
   .ads-table td.ad-name{ font-family:"IBM Plex Mono",monospace; }
+  /* the creative thumbnail: a fixed square so rows stay level whatever aspect Meta returns */
+  .ads-table th.thumb, .ads-table td.thumb{ padding:4px 6px; overflow:visible; }
+  .ads-table td.thumb img, .ads-table td.thumb .thumb-ph{ display:block; width:36px; height:36px; border-radius:5px; border:1px solid var(--border); }
+  .ads-table td.thumb img{ object-fit:cover; background:var(--surface-alt); cursor:zoom-in; transition:transform 0.12s ease, box-shadow 0.12s ease; }
+  /* Meta's thumbnail_url is capped at 64x64, so the hover stops at 1.75x (36 -> 63px): any more
+     and it just goes soft. */
+  .ads-table td.thumb img:hover{ transform:scale(1.75); transform-origin:left center; box-shadow:var(--shadow); position:relative; z-index:5; }
+  .ads-table td.thumb .thumb-ph{ background:var(--surface-alt); cursor:help; }
+  .ads-table tfoot td.thumb{ background:var(--surface-alt); }
   .ads-table td.started{ color:var(--text-muted); font-variant-numeric:tabular-nums; }
   .ads-table td.num{ text-align:right; font-variant-numeric:tabular-nums; }
   .ads-table td.day{ text-align:right; font-variant-numeric:tabular-nums; color:var(--text-muted); }
@@ -837,9 +846,9 @@
 
   function rowKey(r){ return r.account + "|" + r.adset + "|" + r.campaign; }
 
-  // advise, ad name, started, spend, conv, cpp — the day columns then share whatever is left,
-  // all at one identical width, so the day grid reads as an even ladder
-  const ADS_FIXED_W = [104, 220, 74, 92, 58, 82];   // advise, ad name, started, spend, conv, cpp
+  // advise, thumb, ad name, started, spend, conv, cpp — the day columns then share whatever is
+  // left, all at one identical width, so the day grid reads as an even ladder
+  const ADS_FIXED_W = [104, 52, 220, 74, 92, 58, 82];
   const ADS_DAY_W = 96;
 
   function layoutAdsTable(inner){
@@ -1025,6 +1034,36 @@
   }
 
   function isRunningStatus(status){ return !/PAUSED|DELETED|ARCHIVED/i.test(String(status || "")); }
+
+  // The ad's creative, from Meta's own thumbnail link (ad_thumbs.thumb_url). The link is signed and
+  // expires, so a broken image is expected rather than exceptional: it degrades to the same neutral
+  // placeholder as an ad the thumbnail task hasn't reached. Never show the browser's broken icon.
+  function thumbCell(ad){
+    const td = document.createElement("td");
+    td.className = "thumb";
+    if (!ad.thumb){
+      const ph = document.createElement("span");
+      ph.className = "thumb-ph";
+      ph.title = "No thumbnail stored for this ad yet";
+      td.appendChild(ph);
+      return td;
+    }
+    const img = document.createElement("img");
+    img.src = ad.thumb;
+    img.alt = "";
+    img.loading = "lazy";
+    img.decoding = "async";
+    img.referrerPolicy = "no-referrer";   // don't hand the dashboard's URL to Meta's CDN
+    img.title = ad.name + (ad.creativeType ? "  —  " + ad.creativeType.toLowerCase() : "");
+    img.addEventListener("error", () => {
+      const ph = document.createElement("span");
+      ph.className = "thumb-ph";
+      ph.title = "Meta's thumbnail link for this ad has expired — it comes back on the next refresh";
+      img.replaceWith(ph);
+    });
+    td.appendChild(img);
+    return td;
+  }
 
   // Did an adset-level rule decide this adset's Pause, rather than the roll-up of its ads?
   // "adset" is the slow first purchase, "adset_cpp" the adset's own CPP, "adset_spend" its spend
@@ -1370,6 +1409,7 @@
     const hr = document.createElement("tr");
     [
       ["Advise", "", "Each ad's own Keep/Pause, or Pause for every ad when the adset's first purchase took too long. Hover a verdict for the reason."],
+      ["", "thumb", "The ad's creative, straight from Meta. Blank when the thumbnail task hasn't reached this ad yet, or when Meta's link has expired."],
       ["Ad name", "", ""],
       ["Started", "", "The day this ad was created"],
       ["Spend", "num", "Total spend over the 10-day window"],
@@ -1396,6 +1436,8 @@
       const r = document.createElement("tr");
       const advise = ad.advise || null;
       r.appendChild(adviseCell(advise, data.benchmark, isRunningStatus(ad.status), data.adsetAdvise));
+
+      r.appendChild(thumbCell(ad));
 
       const nameTd = document.createElement("td");
       nameTd.className = "ad-name";
@@ -1475,7 +1517,10 @@
 
     const tfoot = document.createElement("tfoot");
     const fr = document.createElement("tr");
-    fr.appendChild(document.createElement("td"));
+    fr.appendChild(document.createElement("td"));   // advise
+    const fthumb = document.createElement("td");    // thumbnail
+    fthumb.className = "thumb";
+    fr.appendChild(fthumb);
     const flabel = document.createElement("td");
     flabel.textContent = "All ads";
     fr.appendChild(flabel);

@@ -18,16 +18,20 @@ export async function onRequestGet(context) {
   }
 
   // campaign is optional but disambiguates: Meta reuses adset names across campaigns
+  // ad_thumbs is a left join on purpose: it is filled by a separate task and is allowed to be
+  // missing or stale for an ad without costing the drill-down its numbers.
   let sql =
-    `SELECT ad_id, ad_name, ad_status, ad_created_date, campaign_name, spend_5d, conv_5d, spend_10d, conv_10d, daily_json, report_date
-     FROM ad_snapshots
-     WHERE team = 'marketing' AND ad_account = ? AND adset_name = ?`;
+    `SELECT s.ad_id, s.ad_name, s.ad_status, s.ad_created_date, s.campaign_name, s.spend_5d, s.conv_5d,
+            s.spend_10d, s.conv_10d, s.daily_json, s.report_date, t.thumb_url, t.object_type AS creative_type
+     FROM ad_snapshots s
+     LEFT JOIN ad_thumbs t ON t.ad_id = s.ad_id
+     WHERE s.team = 'marketing' AND s.ad_account = ? AND s.adset_name = ?`;
   const binds = [account, adset];
   if (campaign) {
-    sql += " AND campaign_name = ?";
+    sql += " AND s.campaign_name = ?";
     binds.push(campaign);
   }
-  sql += " ORDER BY spend_10d DESC, ad_name ASC";
+  sql += " ORDER BY s.spend_10d DESC, s.ad_name ASC";
 
   const { results } = await env.DB.prepare(sql).bind(...binds).all();
 
@@ -48,6 +52,9 @@ export async function onRequestGet(context) {
       spend10: r.spend_10d,
       conv10: r.conv_10d,
       daily,
+      /** Meta's own thumbnail link, or null when the thumbnail task hasn't covered this ad yet */
+      thumb: r.thumb_url || null,
+      creativeType: r.creative_type || null,
     };
   });
 
