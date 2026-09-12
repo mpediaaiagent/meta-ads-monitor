@@ -29,6 +29,11 @@
     --bad:#B3261E;
     --bad-bg:#FBE7E5;
     --bad-border:#EFC0BB;
+    /* the deeper wash the whole Advise cell gets when an adset-level rule paused it, and the ink
+       that reads on a solid --bad pill */
+    --bad-wash:#F7D9D6;
+    --bad-wash-hover:#F2C9C5;
+    --bad-ink:#FFF7F6;
     --shadow:0 1px 2px rgba(34,31,25,0.06), 0 8px 24px -12px rgba(34,31,25,0.18);
     /* widths of the three pinned (frozen) leading columns */
     --w-advise:110px;
@@ -56,6 +61,9 @@
       --bad:#E5847C;
       --bad-bg:rgba(229,132,124,0.14);
       --bad-border:rgba(229,132,124,0.38);
+      --bad-wash:rgba(229,132,124,0.20);
+      --bad-wash-hover:rgba(229,132,124,0.30);
+      --bad-ink:#2B100D;
       --shadow:0 1px 2px rgba(0,0,0,0.3), 0 8px 24px -12px rgba(0,0,0,0.5);
     }
   }
@@ -66,6 +74,7 @@
     --good:#84CC98; --good-bg:rgba(132,204,152,0.14); --good-border:rgba(132,204,152,0.35);
     --warn:#E3A164; --warn-bg:rgba(227,161,100,0.14); --warn-border:rgba(227,161,100,0.38);
     --bad:#E5847C; --bad-bg:rgba(229,132,124,0.14); --bad-border:rgba(229,132,124,0.38);
+    --bad-wash:rgba(229,132,124,0.20); --bad-wash-hover:rgba(229,132,124,0.30); --bad-ink:#2B100D;
     --shadow:0 1px 2px rgba(0,0,0,0.3), 0 8px 24px -12px rgba(0,0,0,0.5);
   }
 
@@ -165,6 +174,16 @@
      adset row — ad pills stay amber, whatever paused them. */
   .pill.pause.by-adset{background:var(--bad-bg);color:var(--bad);border-color:var(--bad-border);}
   .pill.pause.by-adset::before{background:var(--bad);}
+
+  /* …and the whole Advise cell is washed red, with a solid bar down its leading edge. The pill goes
+     solid so it still lifts off the wash. Each state needs its own rule because the pinned-column
+     backgrounds (even rows, hover, expanded) are more specific than a single class. */
+  tbody td.pinned.pin-1.by-adset{ background:var(--bad-wash); box-shadow:inset 4px 0 0 var(--bad); }
+  tbody tr:nth-child(even) td.pinned.pin-1.by-adset{ background:var(--bad-wash); }
+  tbody tr:hover td.pinned.pin-1.by-adset{ background:var(--bad-wash-hover); }
+  tbody tr.expanded td.pinned.pin-1.by-adset{ background:var(--bad-wash-hover); }
+  td.pin-1.by-adset .pill.pause{ background:var(--bad); color:var(--bad-ink); border-color:var(--bad); }
+  td.pin-1.by-adset .pill.pause::before{ background:var(--bad-ink); opacity:0.8; }
 
   .account-chip{ font-family:"Manrope",sans-serif; font-weight:600; font-size:12.5px; color:var(--text); }
 
@@ -698,12 +717,12 @@
       tr.dataset.conv10 = r.conv10;
 
       const tdAdvise = document.createElement("td");
-      tdAdvise.className = "pinned pin-1";
+      // red when an adset-level rule decided it (its own first purchase, CPP or pre-purchase
+      // spend), amber when it is just the roll-up of its ads — the ad pills stay amber either way
+      const byAdsetRule = r.advise === "Pause" && isAdsetBasis(r.adviseDetail && r.adviseDetail.basis);
+      tdAdvise.className = "pinned pin-1" + (byAdsetRule ? " by-adset" : "");
       if (r.advise === "Keep" || r.advise === "Pause"){
         const pill = document.createElement("span");
-        // red when an adset-level rule decided it (its own first purchase or its own CPP), amber
-        // when it is just the roll-up of its ads — the ad pills stay amber either way
-        const byAdsetRule = r.advise === "Pause" && isAdsetBasis(r.adviseDetail && r.adviseDetail.basis);
         pill.className = "pill " + (r.advise === "Keep" ? "keep" : "pause") + (byAdsetRule ? " by-adset" : "");
         pill.textContent = r.advise;
         tdAdvise.appendChild(pill);
@@ -847,6 +866,9 @@
   // compared with the last 3 months of the same product's ads that ran 11+ days.
 
   const INCUBATION_DAYS = 9;
+  // must match adsetImmuneDays / adImmuneDays in lib/cpp-benchmark/src/config.js
+  const IMMUNE_ADSET_DAYS = 2;
+  const IMMUNE_AD_DAYS = 1;
 
   function pct(rate){ return Math.round(rate * 100) + "%"; }
 
@@ -856,6 +878,11 @@
     const product = (bm && bm.product) || "this product";
     const head = "Day " + v.day + " of " + INCUBATION_DAYS + " · " + v.verdict;
     const b = v.benchmark || {};
+    if (v.reason === "immune_early_days"){
+      return head + "\nDay " + v.day + " never decides a verdict — one day of delivery is noise, and an ad " +
+        "paused on it never gets a chance to settle.\n" + fmtCurrency(v.cumSpend) + " spent" +
+        (v.cumPurchases > 0 ? ", " + v.cumPurchases + " purchase" + (v.cumPurchases === 1 ? "" : "s") : ", no purchases yet") + ".";
+    }
     if (v.reason === "no_benchmark"){
       return head + "\nNo benchmark to compare with yet — " +
         (v.cumPurchases > 0
@@ -1009,6 +1036,15 @@
     const fpLine = "\n\n" + firstPurchaseText(d.firstPurchase, d.product);
     const cppLine = adsetCppText(d.adsetCpp, d.product);
     const spendLine = adsetSpendText(d.adsetSpend, d.product);
+    const thrLine = productThresholdText(d.productThreshold, d.product);
+    // the adset's own rules stand down for its first couple of days
+    if (d.adsetCpp && d.adsetCpp.notChecked === "immune_early_days"){
+      const head = r.advise === "Keep"
+        ? "Keep — all " + d.counted + " running ad" + (d.counted === 1 ? " is" : "s are") + " on Keep"
+        : "Pause — " + d.pauseAds.length + " of " + d.counted + " running ads " + (d.pauseAds.length === 1 ? "is" : "are") + " on Pause:\n" + names.join("\n");
+      return head + paused + "\n\nDay " + d.adsetCpp.day + ": too early for any adset-level rule. " +
+        "An adset isn't judged on its own numbers until day " + (IMMUNE_ADSET_DAYS + 1) + " — its ads still are, from their day 2.";
+    }
     if (d.basis === "adset"){
       // the adset's slow first purchase decides, whatever its ads say
       return "Pause — the adset's first purchase took too long\n" + firstPurchaseText(d.firstPurchase, d.product) +
@@ -1035,12 +1071,27 @@
         paused + fpLine;
     }
     // only one of the two can apply: the CPP rule needs a purchase, the spend rule needs there to be none
-    const tail = (cppLine ? "\n\n" + cppLine : "") + (spendLine ? "\n\n" + spendLine : "");
+    const tail = (cppLine ? "\n\n" + cppLine : "") + (spendLine ? "\n\n" + spendLine : "") + (thrLine ? "\n\n" + thrLine : "");
     if (r.advise === "Keep"){
       return "Keep — all " + d.counted + " running ad" + (d.counted === 1 ? " is" : "s are") + " on Keep" + paused + fpLine + tail;
     }
     return "Pause — " + d.pauseAds.length + " of " + d.counted + " running ads " + (d.pauseAds.length === 1 ? "is" : "are") +
       " on Pause:\n" + names.join("\n") + paused + fpLine + tail;
+  }
+
+  // The product's own day-wise threshold. It can overrule a benchmark flag back to Keep, so say
+  // both the number and what it did.
+  function productThresholdText(t, product){
+    if (!t) return "";
+    if (!t.checked){
+      if (t.notChecked === "no_schedule") return (product || "This product") + " has no day-wise threshold, so the 3-month benchmark has the last word.";
+      return "";
+    }
+    const what = t.kind === "purchases"
+      ? t.cumPurchases + " purchase" + (t.cumPurchases === 1 ? "" : "s") + " vs the " + t.limit + " needed"
+      : fmtCurrency(t.cpp) + (t.cumPurchases === 0 ? " (spent with no purchase, so the spend is the CPP)" : "") + " vs " + fmtCurrency(t.limit);
+    const head = (product || "Product") + " threshold, day " + t.checkpointDay + ": " + what;
+    return head + (t.verdict === "Pause" ? " · outside it" : " · inside it, which overrules the 3-month benchmark");
   }
 
   // The adset spend-before-first-purchase rule, spelled out for the hover. Empty when it didn't

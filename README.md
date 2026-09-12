@@ -416,6 +416,57 @@ OR'd together** — the adset is Pause if *any* of them says so:
 3 and 4 are mutually exclusive by construction: 3 needs the adset to have converted, 4 needs it not
 to have. 2, 3 and 4 all make the adset's pill **red** (see below).
 
+Two things sit on top of all of them, added 2026-09-12:
+
+- **Early-day immunity.** An adset's own rules don't apply for its first `adsetImmuneDays` (2) days,
+  and an ad isn't judged on its first `adImmuneDays` (1) day. See "Immunity" below.
+- **The product threshold can overrule rules 3 and 4.** See "Product day thresholds" below.
+
+### Product day thresholds — the rescue
+
+`productDayThresholds` in `lib/cpp-benchmark/src/config.js` (seeded from `DEFAULT_DAY_THRESHOLDS`)
+holds a per-product, day-wise CPP schedule. An adset that rules 3 or 4 have flagged is put **back to
+Keep** when it is inside its product's threshold. The 3-month benchmark is drawn from history and
+can be stricter than the number the business actually runs to; this is how the business number wins.
+
+| day | trubuddy | mpedia / gulu |
+|---|---|---|
+| 2 | ₹700 | at least 1 purchase |
+| 3 | ₹527 | ₹470 |
+| 5 | ₹370 | ₹330 |
+| 10 | ₹280 | ₹250 |
+
+- **They are checkpoints, not exact days.** The one in force is the **latest checkpoint at or before
+  the day**: trubuddy day 4 uses the day-3 number, days 6-9 the day-5 one, day 11+ the day-10 one.
+  Below the first checkpoint there is none.
+- **adi anku and educator program have no schedule on purpose** — "the old process". Nothing rescues
+  them, so the benchmark's word is final.
+- **It only ever rescues.** Being *above* the threshold does not pause anything by itself; it just
+  lets the benchmark's flag stand. Adding an independent Pause would be a one-line change in
+  `judgeAdset`, and was deliberately not made.
+- **It does not overrule the ads.** If the adset's own ads are Pause, the roll-up still says Pause —
+  the rescue only clears the adset-level flag. So a rescued adset can still read Pause with
+  `basis: "ads"`, and `adviseDetail.rescued` is true.
+- **The day-2 row is unreachable at adset level** because immunity covers days 1-2. It is kept so
+  the schedule matches what was specified, and is ready if the rescue is ever extended to ad level.
+
+### Immunity — the first days don't count
+
+- **Adset: days 1-2.** No adset-level rule (2, 3 or 4) may flag it. Its ads are still judged on their
+  own rules, so the row can still be Pause from the roll-up. The hover says so.
+- **Ad: day 1.** The day still appears in the grid with its real numbers, as a Keep with reason
+  `immune_early_days`. One day of delivery is noise, and an ad paused on it never gets to settle.
+
+Both are `adsetImmuneDays` / `adImmuneDays` in config.js. `public/index.html` mirrors them as
+`IMMUNE_ADSET_DAYS` / `IMMUNE_AD_DAYS` for its hover text — **change both** if you retune them.
+
+### CPP when nothing has been bought
+
+`effectiveCpp()` treats **spend as the CPP when purchases are 0**. An adset that has spent ₹900 for
+nothing is a ₹900 CPP, not "no data". This is used by the product-threshold check only; the 3-month
+benchmark rules keep their own no-purchase paths (the first-purchase spend limits), and the two are
+OR'd rather than one replacing the other.
+
 The roll-up itself:
 
 - **Pause** if at least one **running** ad is Pause.
@@ -430,6 +481,11 @@ is to tell at a glance which adsets are being flagged as a whole rather than for
 ad. `isAdsetBasis()` in `public/index.html` is the single check; extend it if another adset-level
 rule is ever added. **Ad pills in the drill-down are always amber**, including ads flagged by the
 slow-first-purchase cascade — the red is an adset-row signal only.
+
+Since 2026-09-12 the **whole Advise cell** is washed red too (`td.pin-1.by-adset`), with a solid
+4px bar down its leading edge and the pill flipped to solid `--bad` on `--bad-ink`. The pinned
+column's own backgrounds (even rows, hover, expanded) are more specific than a single class, so
+**each state needs its own override rule** — that is why there are four of them rather than one.
 
 An ad counts as running unless Meta says it is paused, deleted or archived. Ads you've already
 switched off don't make the adset read Pause.
