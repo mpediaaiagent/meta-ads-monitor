@@ -258,6 +258,9 @@
   .advise-legend.off{ color:var(--warn); }
   /* an ad already paused in Meta keeps its verdict for reference but doesn't count for the adset */
   .ads-table .pill.off{ opacity:0.5; }
+  /* a CPP that is really just spend, because nothing was bought — dotted underline so the number
+     isn't mistaken for a real cost per purchase */
+  td.cpp-no-purchase{ color:var(--warn); text-decoration:underline dotted var(--warn-border); text-underline-offset:3px; cursor:help; }
   .adset-advise-line{ font-size:11.5px; color:var(--text-muted); margin:-4px 0 8px; }
   .adset-advise-line strong{ color:var(--text); }
   .adset-advise-line.slow{ color:var(--warn); background:var(--warn-bg); border:1px solid var(--warn-border); border-radius:6px; padding:5px 9px; margin:-2px 0 10px; }
@@ -774,15 +777,21 @@
       tdCampaign.appendChild(campaignWrap);
       tr.appendChild(tdCampaign);
 
-      const tdCost5 = document.createElement("td");
-      tdCost5.className = "num";
-      tdCost5.textContent = fmtCurrency(r.cost5);
-      tr.appendChild(tdCost5);
-
-      const tdCost10 = document.createElement("td");
-      tdCost10.className = "num";
-      tdCost10.textContent = fmtCurrency(r.cost10);
-      tr.appendChild(tdCost10);
+      // With no purchases the daily task already stores the spend in these columns, which is the
+      // same rule the verdicts use (effectiveCpp). Mark them so the number isn't read as a real
+      // cost per purchase.
+      const costCell = (value, conv, windowLabel) => {
+        const td = document.createElement("td");
+        td.className = "num";
+        td.textContent = fmtCurrency(value);
+        if (!conv && value > 0){
+          td.classList.add("cpp-no-purchase");
+          td.title = "No purchases in the last " + windowLabel + ", so the whole " + fmtCurrency(value) + " counts as the cost per purchase.";
+        }
+        return td;
+      };
+      tr.appendChild(costCell(r.cost5, r.conv5, "5 days"));
+      tr.appendChild(costCell(r.cost10, r.conv10, "10 days"));
 
       const tdAge = document.createElement("td");
       tdAge.className = "num age-cell";
@@ -1414,14 +1423,20 @@
       convTd.textContent = ad.conv10 || 0;
       r.appendChild(convTd);
 
-      // cost per purchase for this ad: its own 10-day spend over its own conversions
+      // cost per purchase for this ad: its own 10-day spend over its own conversions, and with no
+      // conversions the spend itself (see effectiveCpp in lib/cpp-benchmark)
       const cppTd = document.createElement("td");
       cppTd.className = "num";
+      const adSpend = ad.spend10 || 0;
       if (ad.conv10 > 0){
-        cppTd.textContent = fmtCurrency((ad.spend10 || 0) / ad.conv10);
+        cppTd.textContent = fmtCurrency(adSpend / ad.conv10);
+      } else if (adSpend > 0){
+        cppTd.textContent = fmtCurrency(adSpend);
+        cppTd.classList.add("cpp-no-purchase");
+        cppTd.title = "No purchases in the window, so the whole " + fmtCurrency(adSpend) + " counts as the cost per purchase.";
       } else {
         cppTd.textContent = "–";
-        cppTd.title = "No conversions in the window, so there is no cost per purchase";
+        cppTd.title = "Nothing spent in the window";
       }
       r.appendChild(cppTd);
 
@@ -1475,7 +1490,12 @@
     fr.appendChild(fconv);
     const fcpp = document.createElement("td");
     fcpp.className = "num";
-    fcpp.textContent = convSum > 0 ? fmtCurrency(spendSum / convSum) : "–";
+    // the adset's own CPP, and with no purchases at all its spend stands in for one
+    fcpp.textContent = convSum > 0 ? fmtCurrency(spendSum / convSum) : (spendSum > 0 ? fmtCurrency(spendSum) : "–");
+    if (convSum === 0 && spendSum > 0){
+      fcpp.classList.add("cpp-no-purchase");
+      fcpp.title = "No purchases in the window, so the whole " + fmtCurrency(spendSum) + " counts as the cost per purchase.";
+    }
     fr.appendChild(fcpp);
     days.forEach(d => {
       const cell = document.createElement("td");

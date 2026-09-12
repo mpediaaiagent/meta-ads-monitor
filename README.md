@@ -9,8 +9,8 @@ A live dashboard showing a Keep/Pause recommendation for every active Meta (Face
 **Every verdict starts at the ad.** Clicking an adset opens its ads, and each ad gets its own
 Keep/Pause:
 - **Ads in their first 9 days** are compared, day by day, with the same product's successful ads
-  from the last 3 months. That compares their cumulative CPP or, before a first purchase, their
-  spend.
+  from the last 3 months, on cumulative CPP — and **with no purchase, the spend itself is the CPP**,
+  so an unconverted ad faces both that line and the first-purchase spend limit. Day 1 is immune.
 - **Older ads** are compared on their last 10 days' CPP against the product's threshold.
 
 The adset's Advise then follows its ads: **Pause if at least one running ad is Pause, Keep only if
@@ -462,10 +462,37 @@ Both are `adsetImmuneDays` / `adImmuneDays` in config.js. `public/index.html` mi
 
 ### CPP when nothing has been bought
 
-`effectiveCpp()` treats **spend as the CPP when purchases are 0**. An adset that has spent ₹900 for
-nothing is a ₹900 CPP, not "no data". This is used by the product-threshold check only; the 3-month
-benchmark rules keep their own no-purchase paths (the first-purchase spend limits), and the two are
-OR'd rather than one replacing the other.
+`effectiveCpp()` in `lib/cpp-benchmark/src/thresholds.js` treats **spend as the CPP when purchases
+are 0**. An ad or adset that has spent ₹900 for nothing is a ₹900 CPP, not "no data". Since
+2026-09-12 this applies to **every** CPP comparison, not just the product thresholds:
+
+| where | what an unconverted ad/adset is now measured against |
+|---|---|
+| `judgeDay` (ad, days 1-9) | the first-purchase spend limit **and** that day's CPP ceiling |
+| `judgeWindow` (ad, past day 9) | the first-purchase spend limit **and** the product's `max_cpp` |
+| `adsetCpp` (adset) | that day's adset CPP ceiling |
+| `judgeProductThreshold` | the product's day-wise threshold |
+
+**They are OR'd, not swapped.** The first-purchase spend limits still exist and still fire; the CPP
+comparison is an additional way to be paused, so an unconverted ad now faces two lines where it used
+to face one. When both fire, the **spend limit is the reason reported** — it is the more specific
+"never converted" signal.
+
+Once there is a purchase the spend limits stand down for good and only CPP counts, as before:
+judging a converted ad on its pre-purchase spend would leave it on Pause forever however good its
+CPP became.
+
+This makes verdicts materially stricter for unconverted ads. The lines are generous (they are `max`
+of the cohort), so the practical effect is on ads whose spend is between the day's CPP ceiling and
+the first-purchase limit — for trubuddy on 2026-09-12 that was days 6, 8 and 9, whose ad-level
+ceilings (₹442, ₹403, ₹352) sit below the ₹520 first-purchase limit. 113 of the live ads had zero
+purchases, averaging ₹101 spent, so most stayed well inside both.
+
+**On the page:** a CPP cell that is really just spend is shown in amber with a dotted underline and
+a hover saying so (`td.cpp-no-purchase`), in the ads table, the drill-down footer and the adset
+row's two cost columns. Note the adset row's `cost_5d` / `cost_10d` already came this way — the
+daily task has always stored the spend there when conversions are 0, so no pipeline change was
+needed, only the visual cue.
 
 The roll-up itself:
 
