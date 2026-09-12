@@ -161,6 +161,10 @@
   .pill.keep::before{background:var(--good);}
   .pill.pause{background:var(--warn-bg);color:var(--warn);border-color:var(--warn-border);}
   .pill.pause::before{background:var(--warn);}
+  /* red: an adset-level rule paused the whole adset, not the roll-up of its ads. Only ever on the
+     adset row — ad pills stay amber, whatever paused them. */
+  .pill.pause.by-adset{background:var(--bad-bg);color:var(--bad);border-color:var(--bad-border);}
+  .pill.pause.by-adset::before{background:var(--bad);}
 
   .account-chip{ font-family:"Manrope",sans-serif; font-weight:600; font-size:12.5px; color:var(--text); }
 
@@ -697,7 +701,10 @@
       tdAdvise.className = "pinned pin-1";
       if (r.advise === "Keep" || r.advise === "Pause"){
         const pill = document.createElement("span");
-        pill.className = "pill " + (r.advise === "Keep" ? "keep" : "pause");
+        // red when an adset-level rule decided it (its own first purchase or its own CPP), amber
+        // when it is just the roll-up of its ads — the ad pills stay amber either way
+        const byAdsetRule = r.advise === "Pause" && isAdsetBasis(r.adviseDetail && r.adviseDetail.basis);
+        pill.className = "pill " + (r.advise === "Keep" ? "keep" : "pause") + (byAdsetRule ? " by-adset" : "");
         pill.textContent = r.advise;
         tdAdvise.appendChild(pill);
       } else {
@@ -982,6 +989,10 @@
   }
 
   function isRunningStatus(status){ return !/PAUSED|DELETED|ARCHIVED/i.test(String(status || "")); }
+
+  // Did an adset-level rule decide this adset's Pause, rather than the roll-up of its ads?
+  // "adset" is the slow first purchase, "adset_cpp" the adset's own CPP (see lib/cpp-benchmark).
+  function isAdsetBasis(basis){ return basis === "adset" || basis === "adset_cpp"; }
 
   // The adset row's Advise, spelled out: it follows the adset's running ads.
   function adsetAdviseText(r){

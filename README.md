@@ -418,6 +418,14 @@ The roll-up itself:
 - **`–`** when the campaign doesn't match a product, there's no ad data for the adset, or no
   running ad has a verdict.
 
+**Two colours of Pause on the adset row** (added 2026-09-12). A Pause decided by an adset-level rule
+— rules 2 and 3, i.e. `basis` is `adset` or `adset_cpp` — is **red** (`.pill.pause.by-adset`, the
+`--bad` palette). A Pause that is just the roll-up of its ads stays **amber** (`--warn`). The point
+is to tell at a glance which adsets are being flagged as a whole rather than for containing a bad
+ad. `isAdsetBasis()` in `public/index.html` is the single check; extend it if another adset-level
+rule is ever added. **Ad pills in the drill-down are always amber**, including ads flagged by the
+slow-first-purchase cascade — the red is an adset-row signal only.
+
 An ad counts as running unless Meta says it is paused, deleted or archived. Ads you've already
 switched off don't make the adset read Pause.
 
