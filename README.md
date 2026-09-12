@@ -117,23 +117,28 @@ encodes — read it before editing the prompt, because most of it is hard-won:
    every adset that ended with zero ads and every batch that errored — silence is exactly how the
    adset undercount bug below hid itself.
 
-### Refreshing the thumbnails — NOT SCHEDULED YET
+### The fourth scheduled task: ad thumbnail refresh
 
-`ad_thumbs` is populated by hand as of 2026-09-12. For the column to stay useful it needs a daily
-pass, because Meta's links expire and new ads appear every day. Two options, neither built:
+**"Meta Ads — ad thumbnail refresh (ad_thumbs)"** — trigger id `trig_01WDHJMrAmW7FV4FQtvEYUgc`,
+cron `30 4 * * *` (04:30 UTC / 10:00 IST), model claude-sonnet-5, with the
+`Cloudflare_Developer_Platform` and `Meta_MCP` connectors. Created 2026-09-12.
+Manage it at https://claude.ai/code/routines/trig_01WDHJMrAmW7FV4FQtvEYUgc
 
-1. **Fold it into the 03:30 ad-level task.** It already enumerates every ad, so it would only add
-   the `creative_id` field to a call it is already making, plus one `ads_get_creatives` batch.
-   Cheapest in API calls. **But** that task is the fragile one and it aborts rather than write bad
-   data — so the thumbnail work must be wrapped so that any failure is swallowed and can never
-   block the snapshot write. Thumbnails are cosmetic; spend and conversions are not.
-2. **A separate routine.** Slower (it re-enumerates the ads) but it can fail freely without costing
-   a day of numbers. Safer, and the recommended one.
+It runs **one hour after** the 03:30 ad-level task so it sees that day's fresh ad list, and it
+writes to exactly one table: `ad_thumbs`.
 
-Either way the shape is: read `SELECT DISTINCT ad_id FROM ad_snapshots`, look up `creative_id` at
-`level=ad` with `object_ids` in batches, fetch those creatives' `thumbnail_url`, and UPSERT into
-`ad_thumbs` with `ON CONFLICT(ad_id) DO UPDATE`. Re-fetch everything each run rather than only new
-ads — the point is refreshing expiring links, not just covering new ads.
+- **It re-fetches every ad every run**, not just new ones. That is the whole point: Meta's links
+  expire after roughly four days, so a catch-up-only task would leave the column slowly going blank.
+- **It is deliberately the timid one.** A missing thumbnail costs nothing — the dashboard shows a
+  placeholder and every number still works — so the prompt tells it that when anything goes wrong it
+  should do *less*, never delete rows to "start clean", and never leave `ad_thumbs` emptier than it
+  found it.
+- **Why it is separate from the 03:30 task**, which already enumerates every ad and could have done
+  this in one extra field. That task aborts rather than write bad data, and a cosmetic feature must
+  never be able to block the spend numbers. A separate routine can fail as often as it likes.
+- The one way it can do real harm is a wrong `ad_id → creative_id → thumbnail_url` join, which would
+  show the wrong creative against an ad. The prompt calls that out and forbids matching on ad *name*
+  — names repeat across ads with different creatives.
 
 ### The third scheduled task: monthly benchmark refresh
 
@@ -216,9 +221,8 @@ object_type (TEXT, VIDEO/SHARE/...), fetched_at (TEXT)
   404 tomorrow. The UI treats that as normal: an `error` handler swaps the image for the same
   neutral placeholder an unfetched ad gets, and the hover says the link expired. **It never shows a
   broken-image icon.** This is the one thing to understand before "fixing" a missing thumbnail.
-- **Nothing refreshes it yet.** `/api/ads` LEFT JOINs it so a missing or stale row costs the
-  drill-down nothing, but keeping it current needs a daily step — see "Refreshing the thumbnails".
-- **Seeded by hand on 2026-09-12** with 9 TruBuddy ads, to prove the path end to end.
+- **Kept current by its own 04:30 task** (see "The fourth scheduled task" above). `/api/ads` LEFT
+  JOINs the table, so a missing or stale row costs the drill-down nothing either way.
 
 `benchmark_thresholds` — one row per product, **edited from the dashboard's "Edit Thresholds" panel**:
 
