@@ -14,9 +14,12 @@ Keep/Pause:
 - **Older ads** are compared on their last 10 days' CPP against the product's threshold.
 
 The adset's Advise then follows its ads: **Pause if at least one running ad is Pause, Keep only if
-they all are.** One rule overrides that: **an adset whose first purchase takes more days than the
-slowest successful ad took is Pause, and so is every ad under it** (see section 10). The one number
-per product that drives all of this (a CPP threshold) is editable on the dashboard.
+they all are.** Two adset-level rules are OR'd on top of that (see section 10): **an adset whose
+first purchase takes more days than the slowest successful ad took is Pause, and so is every ad
+under it**, and **an adset whose own cumulative CPP is above what past adsets of that product had on
+the same day is Pause**, this one without touching its ads' verdicts. The two numbers per product
+that drive all of this (a CPP threshold and an optional spend-with-no-purchase threshold) are
+editable on the dashboard.
 
 Live at: **https://meta-ads-monitor.pages.dev/**
 
@@ -401,7 +404,14 @@ The button reads "Edit Thresholds", not "Edite Thresholds" — someone already f
 ### 10. Adset Advise follows its ads
 
 Since 2026-09-11 the adset row's Advise is **not** the daily task's 5/10-day threshold rule. It is
-rolled up from the adset's ads in `/api/snapshots`, using the same code the drill-down uses:
+decided in `/api/snapshots` by the same code the drill-down uses, and there are now **three rules
+OR'd together** — the adset is Pause if *any* of them says so:
+
+1. the roll-up from its ads (below),
+2. slow first purchase (added 2026-09-11),
+3. adset CPP above the adset benchmark (added 2026-09-12).
+
+The roll-up itself:
 
 - **Pause** if at least one **running** ad is Pause.
 - **Keep** if every running ad with a verdict is Keep.
@@ -438,6 +448,35 @@ make its first purchase than the slowest successful ad of its product took, the 
   - Each ad's pill is labelled `adset`, and its hover text gives the adset reason followed by the
     ad's own verdict (kept in `advise.own`).
   - The day grid still shows each ad's own day-by-day verdicts.
+
+**Adset CPP against past adsets (added 2026-09-12).** The whole adset's cumulative CPP is compared,
+day by day, with what past adsets of the same product had on the same day. Above that day's line and
+the adset is Pause — even when every one of its ads passes on its own. An adset can be built of
+individually-acceptable ads and still cost more per purchase than any adset that ever worked.
+
+- **The benchmark** (`buildAdsetBenchmarks`) is built the same way as the ad-level one and from the
+  same stored rows, just grouped by `ad_account|campaign_name|adset_name` instead of by ad: the
+  highest cumulative CPP any qualifying past adset had on that day, plus `cppMargin` (10%). The
+  **same `max_cpp` threshold picks the adset cohort**, so a past adset that was already too
+  expensive at day 10 can't raise the line for everyone else.
+- **It does NOT cascade to the ads.** Unlike the slow-first-purchase rule, the adset reads Pause
+  while its ads keep their own verdicts, so the ad column still says which ones are worth keeping.
+  `basis` is `adset_cpp`, and the hover spells out both halves.
+- **Only days 1–9**, and only once the adset has a purchase — before that there is no CPP and the
+  first-purchase rules already cover it. Guarded like the first-purchase rule: every ad must have
+  started inside the 10-day window, or day alignment would be reading the wrong day 1.
+- **Known bias, read this before trusting a number.** `benchmark_ads` stores only ads that ran 11+
+  days, so a past adset is rebuilt from its long-running ads alone — its short-lived ads are not
+  stored and are missing from the sum. The live adset it is compared against uses *all* of its ads.
+  That makes the historical line a little cheaper than those adsets really were, so **the rule leans
+  towards Pause**. Fixing it properly means storing every ad of a qualifying adset in the monthly
+  refresh; it is not a change on the dashboard side.
+- **Calibration on 2026-09-12**, the day it shipped: trubuddy's cohort was 52 adsets and the Pause
+  lines ran ₹410.93 (day 1), ₹682.55 (day 2), ₹412.69 (day 3) … ₹348.41 (day 9). The day-2 spike is
+  a small-sample artefact of using `max` as the statistic — the ad-level benchmark has the same
+  property. Of the 27 live adsets eligible that day, **13 were flagged** by this rule. If that hit
+  rate looks too high, the dials are `ceilingStatistic` (try a percentile) and `cppMargin`, both in
+  `lib/cpp-benchmark/src/config.js` — don't special-case it in the dashboard.
 
 ### 11. Campaign copy button
 

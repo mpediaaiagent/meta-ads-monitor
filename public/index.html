@@ -995,17 +995,46 @@
     const paused = d.ignoredPaused ? "\n(" + d.ignoredPaused + " ad" + (d.ignoredPaused === 1 ? " is" : "s are") + " already paused in Meta and not counted)" : "";
     const names = d.pauseAds.map(a => "• " + a.name + (a.basis === "window" ? " (last 10 days)" : " (day " + a.ageDays + ")"));
     const fpLine = "\n\n" + firstPurchaseText(d.firstPurchase, d.product);
+    const cppLine = adsetCppText(d.adsetCpp, d.product);
     if (d.basis === "adset"){
       // the adset's slow first purchase decides, whatever its ads say
       return "Pause — the adset's first purchase took too long\n" + firstPurchaseText(d.firstPurchase, d.product) +
         "\nEvery ad under it (" + d.ads + ") is flagged Pause." +
-        (names.length ? "\n\nOn their own rules, " + names.length + " of " + d.counted + " running ads " + (names.length === 1 ? "is" : "are") + " also on Pause:\n" + names.join("\n") : "");
+        (names.length ? "\n\nOn their own rules, " + names.length + " of " + d.counted + " running ads " + (names.length === 1 ? "is" : "are") + " also on Pause:\n" + names.join("\n") : "") +
+        (cppLine ? "\n\n" + cppLine : "");
     }
+    if (d.basis === "adset_cpp"){
+      // every ad may pass on its own and the adset still cost too much per purchase
+      return "Pause — the whole adset costs more per purchase than past adsets did by this day\n" + cppLine +
+        "\n\nIts ads keep their own verdicts: " +
+        (names.length
+          ? names.length + " of " + d.counted + " running ads " + (names.length === 1 ? "is" : "are") + " on Pause:\n" + names.join("\n")
+          : "all " + d.counted + " running ad" + (d.counted === 1 ? " is" : "s are") + " on Keep, so this flag is the adset's alone.") +
+        paused + fpLine;
+    }
+    const cppTail = cppLine ? "\n\n" + cppLine : "";
     if (r.advise === "Keep"){
-      return "Keep — all " + d.counted + " running ad" + (d.counted === 1 ? " is" : "s are") + " on Keep" + paused + fpLine;
+      return "Keep — all " + d.counted + " running ad" + (d.counted === 1 ? " is" : "s are") + " on Keep" + paused + fpLine + cppTail;
     }
     return "Pause — " + d.pauseAds.length + " of " + d.counted + " running ads " + (d.pauseAds.length === 1 ? "is" : "are") +
-      " on Pause:\n" + names.join("\n") + paused + fpLine;
+      " on Pause:\n" + names.join("\n") + paused + fpLine + cppTail;
+  }
+
+  // The adset-CPP rule, spelled out for the hover. Empty string when it didn't apply, so callers
+  // can drop the line entirely rather than show "not checked" noise.
+  function adsetCppText(c, product){
+    if (!c) return "";
+    if (!c.checked){
+      if (c.notChecked === "started_before_window") return "Adset CPP: not checked — an ad started before this 10-day window, so the adset's day 1 isn't in the data.";
+      if (c.notChecked === "no_benchmark") return "Adset CPP: not checked — " + (c.cumCpp === null ? "no purchase yet, so there's no CPP to compare." : "no adset benchmark for " + (product || "this product") + " on day " + c.day + " yet.");
+      return "";
+    }
+    const head = "Adset CPP on day " + c.day + ": " + fmtCurrency(c.cumCpp) +
+      " (" + fmtCurrency(c.cumSpend) + " ÷ " + c.cumPurchases + " purchase" + (c.cumPurchases === 1 ? "" : "s") + ")";
+    const line = " vs " + fmtCurrency(c.upperBound) + " — the highest any of " + c.sampleSize + " past " +
+      (product || "") + " adset" + (c.sampleSize === 1 ? "" : "s") + " had on their day " + c.day +
+      " (" + fmtCurrency(c.ceiling) + ") + " + pct(c.margin);
+    return head + line + (c.verdict === "Pause" ? " · above it" : " · within it");
   }
 
   // One line under the drill-down header saying what the ad-level Advise column is based on.
@@ -1051,6 +1080,12 @@
     if (dayLimit != null){
       msg += " Whole adset: every ad is Pause when the adset's first purchase takes more than " + daysText(dayLimit) +
         ", the slowest of its successful ads.";
+    }
+    const ab = bm.adsetBenchmark;
+    if (ab && ab.cohortSize){
+      msg += " The adset is also Pause on its own when its cumulative CPP goes above what any of " +
+        ab.cohortSize + " past " + bm.product + " adsets had on the same day + " + pct(bm.cppMargin) +
+        " — that one doesn't touch its ads' verdicts.";
     }
     text.appendChild(document.createTextNode(msg));
     el.appendChild(text);
