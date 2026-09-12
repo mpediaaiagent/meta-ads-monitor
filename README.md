@@ -31,7 +31,7 @@ This is one of several independent tools linked from the hub page at https://met
     - Each row's `advise` is **rolled up from that adset's ads**; the daily task's stored value is not used.
     - `adviseDetail` says which running ads are on Pause.
     - If the ad-level data can't be loaded, it returns the stored daily-task value instead, with `adviseSource: "daily_task_fallback"`, and the page shows a warning.
-  - `thresholds.js` — `GET` returns the per-product CPP thresholds from `benchmark_thresholds`, each with how many stored 11+ day ads it lets into the benchmark. `POST` updates **one** product's `max_cpp` (the dashboard's single Save button fans out one request per product — see below).
+  - `thresholds.js` — `GET` returns the per-product thresholds from `benchmark_thresholds` (`max_cpp` and the optional `max_spend_no_purchase`), each with how many stored 11+ day ads it lets into the benchmark and the derived spend-with-no-purchase limit that an empty field falls back to. `POST` updates **one** product's row (the dashboard's single Save button fans out one request per product — see below); a blank `max_spend_no_purchase` clears it to NULL, anything non-blank must be a number above 0.
   - `ads.js` — `GET /api/ads?account=&adset=&campaign=` returns every ad in one adset with its day-by-day spend and conversions, for the adset drill-down.
     - It also returns each ad's Keep/Pause (`advise`), the adset's verdict (`adsetAdvise`, including its `firstPurchase` check), and a `benchmark` summary.
     - All three are computed on every request from raw D1 rows.
@@ -179,13 +179,30 @@ A row joins to its adset row on `(ad_account, adset_name, campaign_name)` — th
 
 ```
 product (TEXT PK, lower-case: 'trubuddy', 'mpedia', 'gulu', 'educator program', 'adi anku'),
-max_cpp (REAL), updated_at (TEXT)
+max_cpp (REAL), max_spend_no_purchase (REAL, nullable), updated_at (TEXT)
 ```
 
-`max_cpp` is used in two ways, and both read it on every request, so a save applies at once:
+Two thresholds per product, for the two ways an ad can fail. Both are read on every request, so a
+save applies at once.
+
+`max_cpp` — applies once an ad **has** purchases, and is used two ways:
 - **Benchmark filter:** an 11+ day ad counts as successful only if its cumulative CPP at day 10 is
   at or under it.
 - **Older ads:** an ad past day 9 is Pause when its last 10 days' CPP is above it.
+
+`max_spend_no_purchase` — applies while an ad has **no** purchase at all: it is Pause once it has
+spent more than this, both in its first 9 days and over its last 10. It is **optional**, and NULL
+is meaningful: the limit then comes from the successful ads' own spend before their first purchase
+(`firstPurchaseLimit`), which is how this worked before the column existed. So a blank field is the
+old behaviour exactly, and the column was added NULL for every product on 2026-09-12 — nothing
+changed until someone typed a number.
+
+Which one is in force shows up in `firstPurchaseLimit.source` (`"threshold"` vs `"benchmark"`), and
+`firstPurchaseLimit.derived` always carries what the successful ads alone would have set, so the
+panel can show it as the placeholder behind an empty field.
+
+Note that an override applies even to a product with **no** successful ads, where the derived limit
+would be null and every unconverted ad would otherwise read Keep.
 
 Seeded on 2026-09-11 from the old 10-day cost thresholds: 280 for every product except educator
 program at 700.
@@ -255,13 +272,27 @@ Sorting by the Advise column still groups the Pauses together.
 
 ### 5. Thresholds panel — one Save for the whole table
 
-The panel ("CPP threshold by product") lists every product with **one** input, its max CPP from
-`benchmark_thresholds`. Next to it is how many of the stored 11+ day ads that number lets into the
-benchmark, e.g. "119 of 420 ads that ran 11+ days". The adset-level 5/10-day inputs were removed on
-2026-09-11. There is a **single Save button at the bottom of the table** (`#thresh-save-all`)
+The panel ("Thresholds by product") lists every product with **two** inputs from
+`benchmark_thresholds`: `.f-maxcpp` (max CPP, required) and `.f-maxspend` (max spend with no
+purchase, optional — added 2026-09-12). Next to them is how many of the stored 11+ day ads the CPP
+number lets into the benchmark, e.g. "119 of 420 ads that ran 11+ days". The adset-level 5/10-day
+inputs were removed on 2026-09-11.
+
+An empty `.f-maxspend` is a real value, not a missing one: it hands the limit back to the benchmark,
+and its **placeholder shows the number that takes over** (`auto 520`, or just `auto` when that
+product has no successful ads to derive one from). That is why it is wider than the CPP box — the
+placeholder has to fit. Don't "fix" an empty field by writing the placeholder into it; that would
+freeze a number that is meant to track the benchmark.
+
+The help paragraph needs `max-width` (`.thresholds-panel p.help`). The panel shares the wide,
+horizontally pannable container the adsets table uses, so unconstrained prose runs off the side of
+the page instead of wrapping.
+
+There is a **single Save button at the bottom of the table** (`#thresh-save-all`)
 rather than one button per row. Clicking it:
 
-- reads the current input values from every `#thresh-body tr[data-product]` row,
+- reads both input values from every `#thresh-body tr[data-product]` row (an empty `.f-maxspend`
+  goes out as `""`, which the API stores as NULL),
 - issues one `POST /api/thresholds` per product concurrently (the API only accepts a single product per request),
 - disables itself and shows "Saving…" while the requests are in flight, then
 - reports **one combined status message** in `#thresh-status`: either `Saved all N products · Advise updated.` (green, auto-clears after 4s) or `Saved X of N · failed: <product> (<reason>), …` (red, and it stays put) naming each product that failed and why.

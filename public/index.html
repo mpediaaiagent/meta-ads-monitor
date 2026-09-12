@@ -254,7 +254,9 @@
      panel render open on every load regardless of the toggle. This puts `hidden` back in charge. */
   .thresholds-panel[hidden]{ display:none; }
   .thresholds-panel h2{ margin:0; font-size:16px; font-weight:800; }
-  .thresholds-panel p.help{ margin:0; color:var(--text-muted); font-size:12.5px; }
+  /* the panel sits in the same wide, pannable container as the adsets table, so the prose needs
+     its own width or it runs off the side of the page instead of wrapping */
+  .thresholds-panel p.help{ margin:0; color:var(--text-muted); font-size:12.5px; max-width:760px; line-height:1.6; }
   /* capped so the five columns stay grouped instead of spreading across a full-width page */
   /* min-width:0 matters: the global table{min-width:100%} otherwise beats max-width and
      stretches three short columns across the whole page */
@@ -263,6 +265,9 @@
   .thresh-table td{ padding:6px 8px; border-bottom:1px solid var(--border); font-family:"IBM Plex Mono",monospace; }
   .thresh-table tr:last-child td{ border-bottom:none; }
   .thresh-table input{ width:90px; font-family:"IBM Plex Mono",monospace; font-size:13px; background:var(--surface-alt); border:1px solid var(--border); border-radius:6px; padding:5px 7px; color:var(--text); }
+  /* wider than the CPP box: this one can be empty, and then it shows the fallback in its placeholder */
+  .thresh-table input.f-maxspend{ width:118px; }
+  .thresh-table input.f-maxspend::placeholder{ color:var(--text-muted); opacity:0.75; }
   .thresh-table input:focus{ outline:2px solid var(--accent); outline-offset:1px; }
   .thresh-save{ font-family:"Manrope",sans-serif; font-weight:700; font-size:12px; padding:5px 12px; border-radius:6px; border:1px solid var(--border); background:var(--accent-soft); color:var(--accent); cursor:pointer; }
   .thresh-save:hover{ filter:brightness(1.05); }
@@ -302,11 +307,11 @@
   </header>
 
   <div class="thresholds-panel" id="thresholds-panel" hidden>
-    <h2>CPP threshold by product</h2>
+    <h2>Thresholds by product</h2>
     <p class="help">
-      One number per product, used two ways.
-      <strong>Benchmark:</strong> an ad that ran 11+ days counts as successful only if its cumulative CPP at day 10 is at or under this. Those ads set the day-by-day lines that ads in their first 9 days are judged against.
-      <strong>Older ads:</strong> an ad past day 9 is Pause when its CPP over the last 10 days is above this.
+      Two numbers per product, for the two ways an ad can fail.
+      <strong>Max CPP</strong> applies once an ad has purchases, and is used twice over: an ad that ran 11+ days counts as successful only if its cumulative CPP at day 10 is at or under it (those ads set the day-by-day lines that ads in their first 9 days are judged against), and an ad past day 9 is Pause when its CPP over the last 10 days is above it.
+      <strong>Max spend, no purchase</strong> applies while an ad still has no purchase at all: it is Pause once it has spent more than this, in its first 9 days or over its last 10. Leave it blank to use the limit drawn from the successful ads' own spend before their first purchase, which is what this did before.
       Each adset's Advise then follows its ads: Pause if any running ad is Pause.
       <strong>Slow first purchase:</strong> an adset whose first purchase takes more days than the slowest successful ad's is Pause, with every ad under it.
       Press Save once to write every row. Changes apply immediately.
@@ -316,6 +321,7 @@
         <tr>
           <th>Product</th>
           <th>Max CPP (₹)</th>
+          <th>Max spend, no purchase (₹)</th>
           <th>Successful ads at this threshold</th>
         </tr>
       </thead>
@@ -1022,19 +1028,24 @@
     const older = thr
       ? " Past day " + bm.incubationMaxDay + ": Pause when the last 10 days' CPP is above " + thr + "."
       : " Past day " + bm.incubationMaxDay + ": no threshold set, so Keep.";
+    // the spend-with-no-purchase line, saying which of the two numbers is actually in force
+    const fp = bm.firstPurchaseLimit;
+    const noPurchase = fp && fp.value !== null
+      ? "spend with no purchase goes past " + fmtCurrency(fp.value) +
+        (fp.source === "threshold" ? " (your threshold)" : " (the slowest successful ad's)")
+      : "";
     let msg;
     if (!bm.cohortSize){
       msg = " · days 1–" + bm.incubationMaxDay + ": nothing to compare with yet — " + bm.cohortSize + " of " + bm.candidates + " " + bm.product +
         " ads that ran " + bm.successMinDays + "+ days" + (thr ? " had a day-" + bm.successCppDay + " CPP within " + thr : "") +
-        ", so they show Keep." + older;
+        // with no cohort there is no CPP line, but an edited threshold still judges unconverted ads
+        (noPurchase ? ", so they show Keep until " + noPurchase + "." : ", so they show Keep.") + older;
     } else {
       msg = " · days 1–" + bm.incubationMaxDay + ": compared with " + bm.cohortSize + " of " + bm.candidates + " " + bm.product +
         " ads that ran " + bm.successMinDays + "+ days" + (bm.windowSince ? " since " + fmtDay(bm.windowSince) : "") +
         (thr ? " with a day-" + bm.successCppDay + " CPP within " + thr : "") +
         ". Pause when cumulative CPP goes above that day's highest + " + pct(bm.cppMargin) +
-        (bm.firstPurchaseLimit && bm.firstPurchaseLimit.value !== null
-          ? ", or spend with no purchase goes past " + fmtCurrency(bm.firstPurchaseLimit.value)
-          : "") + "." + older;
+        (noPurchase ? ", or " + noPurchase : "") + "." + older;
     }
     const dayLimit = bm.firstPurchaseDayLimit && bm.firstPurchaseDayLimit.value;
     if (dayLimit != null){
@@ -1472,6 +1483,21 @@
         input.value = t.max_cpp;
         inputTd.appendChild(input);
         tr.appendChild(inputTd);
+        // blank is meaningful here: it hands the limit back to the benchmark, so the placeholder
+        // shows the number that would take over
+        const spendTd = document.createElement("td");
+        const spendInput = document.createElement("input");
+        spendInput.type = "number";
+        spendInput.step = "any";
+        spendInput.min = "0";
+        spendInput.className = "f-maxspend";
+        spendInput.value = t.max_spend_no_purchase == null ? "" : t.max_spend_no_purchase;
+        spendInput.placeholder = t.derivedSpendNoPurchase == null ? "auto" : "auto " + t.derivedSpendNoPurchase;
+        spendInput.title = t.derivedSpendNoPurchase == null
+          ? "Leave blank to use the successful ads' own spend before first purchase. There isn't one for this product yet, so a blank means no limit and ads with no purchase stay Keep."
+          : "Leave blank to use the successful ads' own spend before first purchase (currently ₹" + t.derivedSpendNoPurchase + ").";
+        spendTd.appendChild(spendInput);
+        tr.appendChild(spendTd);
         const count = document.createElement("td");
         count.className = "count";
         count.textContent = t.successful == null
@@ -1483,7 +1509,7 @@
       });
       saveAllBtn.disabled = tbody.rows.length === 0;
     } catch(err){
-      tbody.innerHTML = '<tr><td colspan="3" style="color:var(--bad);">Failed to load thresholds: ' + err.message + '</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="4" style="color:var(--bad);">Failed to load thresholds: ' + err.message + '</td></tr>';
       saveAllBtn.disabled = true;
     }
   }
@@ -1507,7 +1533,11 @@
         const r = await fetch("/api/thresholds", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ product, max_cpp: tr.querySelector(".f-maxcpp").value }),
+          body: JSON.stringify({
+            product,
+            max_cpp: tr.querySelector(".f-maxcpp").value,
+            max_spend_no_purchase: tr.querySelector(".f-maxspend").value,
+          }),
         });
         const d = await r.json().catch(() => ({}));
         if (!r.ok || d.error) throw new Error(d.error || ("HTTP " + r.status));
